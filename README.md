@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Razorwire
 
-## Getting Started
+Razorwire is an internal reels-style learning surface for products, systems, culture, and AIDocs. Teams can post short explainers, and source-of-truth documents can be turned into playable reel drafts.
 
-First, run the development server:
+## What you can do
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Browse an Instagram-style internal learning feed.
+- Like, save, comment on, and share feed posts.
+- Post a team clip with title, owner, category, duration, tags, and key takeaway.
+- Paste or upload an AIDoc/spec/topic and create a playable explainer draft.
+- Preview the generated reel with scenes, captions, narration, play/pause, next/previous, and browser voice narration.
+- Post the generated reel back into the feed.
+
+## How video creation works today
+
+Razorwire currently creates a **playable reel draft**, not a rendered MP4 file.
+
+The flow is:
+
+```text
+AIDoc / spec text
+→ scenes + captions + narration script
+→ playable reel preview
+→ post reel to feed
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The reel preview includes scene progression, captions, narration text, and optional browser voice playback. Exporting the draft as an MP4/WebM is a natural next step.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Try the sample AIDoc
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+A sample non-sensitive spec is included at:
 
-## Learn More
+```text
+public/samples/payment-routing-readiness-aidoc.md
+```
 
-To learn more about Next.js, take a look at the following resources:
+Fastest path:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Run the app.
+2. Click **Load sample AIDoc** in the **Generate from AIDoc** panel.
+3. Click **Create reel draft**.
+4. Press **Play** in the reel preview, or **Voice** to hear the current scene narrated by the browser.
+5. Click **Post reel to feed**.
+6. Like, save, comment on, or share the new feed post.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Manual upload path:
 
-## Deploy on Vercel
+1. Open or download `public/samples/payment-routing-readiness-aidoc.md`.
+2. In Razorwire, click **Upload .txt / .md / .html**.
+3. Select the sample file.
+4. Click **Create reel draft**.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Getting started
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+## Verification
+
+```bash
+npm run lint
+npm run build
+```
+
+## Prototype boundaries
+
+| Capability | Current behavior | Production follow-up |
+|---|---|---|
+| Feed actions | Local like/save/comment/share state | Persist actions in backend |
+| Video upload | Captures clip metadata and learning takeaway | Upload binary video to object storage and transcode |
+| AI generation | Deterministic local draft generator | Claude API summarization/script/storyboard generation |
+| AIDocs ingestion | Paste text, load sample, or upload text-like files | Pull docs via Aidocs API/CLI with permissions |
+| Voice/video | Playable scene reel + browser voice narration | TTS + slide/diagram rendering + MP4 assembly |
+| Auth | No auth | Razorpay SSO and content permissions |
+| Persistence | In-memory browser state | Backend database + object storage |
+
+## Suggested next increments
+
+1. Add real Claude integration for summary/script/storyboard generation.
+2. Use the installed `aidocs` CLI/API to select and ingest authorized AIDocs.
+3. Generate voiceover with a TTS provider and captions from the script.
+4. Render scenes as slides/diagrams and stitch them into a short MP4.
+5. Replace local state with an API and database.
+6. Add Razorpay SSO, ownership, review/approval, and content governance.
+
+## Tech stack
+
+- Next.js App Router
+- React
+- TypeScript
+- Tailwind CSS
