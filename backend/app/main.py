@@ -42,6 +42,7 @@ from .storyboard import StoryboardInvalid
 
 log = logging.getLogger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
@@ -60,8 +61,6 @@ app.add_middleware(
 MEDIA_DIR = Path(settings.media_dir)
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
-
-
 
 
 # --------------------------------------------------------------------------- wire types
