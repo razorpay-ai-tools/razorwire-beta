@@ -105,25 +105,23 @@ export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
   const [paging, setPaging] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [reloadToken, setReloadToken] = useState(0);
+  const [trackedFilter, setTrackedFilter] = useState(filterKey);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const viewed = useRef(new Set<string>());
   const inFlight = useRef(false);
 
-  // A different slice means everything on screen belongs to the previous one. Reset
-  // during render rather than in an effect, which would paint the stale posts once.
-  // Seeded from that slice's own cache, so switching tabs is instant the second time.
-  const [trackedFilter, setTrackedFilter] = useState(filterKey);
-  if (trackedFilter !== filterKey) {
-    const cached = readCachedFeed(cacheKey);
+  useEffect(() => {
+    if (trackedFilter === filterKey) return;
+    const cached = readCachedFeed(cacheKeyFor(filterKey));
     setTrackedFilter(filterKey);
     setPosts(cached?.items ?? []);
     setCursor(cached?.nextCursor ?? null);
     setActiveIndex(0);
     setError(null);
     setPhase(cached ? 'ready' : 'loading');
-  }
+  }, [cacheKey, filterKey, trackedFilter]);
 
   // First page. State only ever changes in the promise callbacks — updating it
   // synchronously in an effect body cascades an extra render.
