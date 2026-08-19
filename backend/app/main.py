@@ -38,7 +38,9 @@ from .auth import current_user
 from .config import settings
 from .models import Comment, Job, Like, Post, Save, User, get_session, init_db, utcnow
 from .pipeline import run_script_stage, storyboard_to_json
-from .storyboard import StoryboardInvalid
+from .render_contract import RenderContractInvalid, emit
+from .slack import SlackUnavailable, fetch_thread, parse_permalink
+from .storyboard import Storyboard, StoryboardInvalid
 
 log = logging.getLogger(__name__)
 
@@ -138,13 +140,16 @@ class CommentCreate(_Out):
 
 
 class GenerateRequest(_Out):
-    kind: Literal["aidoc", "topic"] = "topic"
+    kind: Literal["aidoc", "slack", "topic"] = "topic"
     #: The topic, or pasted document text. Optional for kind="aidoc", where the
     #: backend fetches the document itself and only falls back to this if that fails.
     input: str = ""
     doc_id: str | None = None
     doc_title: str | None = None
     doc_url: str | None = None
+    #: Slack message permalink, for kind="slack". A link to any reply works — the
+    #: adapter resolves it to the parent thread.
+    slack_url: str | None = None
 
 
 class JobOut(_Out):
@@ -426,6 +431,25 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
                     if not body.input.strip():
                         raise RuntimeError(f"could not read {body.doc_id}: {exc}") from exc
 
+            elif body.kind == "slack" and body.slack_url:
+                # No pasted-text fallback here on purpose: text pasted out of Slack has
+                # not been through the scrubber, and a thread is the one source where
+                # that matters most.
+                try:
+                    thread = fetch_thread(body.slack_url)
+                except SlackUnavailable as exc:
+                    raise RuntimeError(f"could not read that thread: {exc}") from exc
+                if not thread.is_structured:
+                    raise RuntimeError(
+                        f"that thread is too thin to explain — {len(thread.sections)} usable "
+                        f"message(s) from {len(thread.participants)} participant(s)"
+                    )
+                text = thread.to_prompt_text()
+                doc_title = doc_title or thread.title
+                doc_url = doc_url or thread.url
+                if thread.redactions:
+                    log.info("job %s: redacted %s before the model", job_id, thread.redactions)
+
             if not text.strip():
                 raise RuntimeError("nothing to generate from")
 
@@ -471,6 +495,23 @@ def generate(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "aidoc generation needs a docId")
     if body.kind == "topic" and len(body.input.strip()) < 10:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "topic generation needs input")
+    if body.kind == "slack":
+        if not body.slack_url:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "slack generation needs a slackUrl"
+            )
+        # Validated here, not in the worker: a bad link or a channel we are not allowed
+        # to read should be a 422 the caller sees, not a job that fails a second later.
+        try:
+            ref = parse_permalink(body.slack_url)
+        except SlackUnavailable as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        if ref.channel not in settings.slack_allow_list:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"{ref.channel} is not in SLACK_ALLOWED_CHANNELS. Ingesting a channel is "
+                "opt-in, because a thread's participants did not write it for the feed.",
+            )
 
     job = Job(requester_id=user.id, source_kind=body.kind, source_input=body.input[:2000])
     session.add(job)
@@ -486,3 +527,45 @@ def get_job(job_id: str, session: SessionDep, user: UserDep) -> Job:
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
     return job
+
+
+# ------------------------------------------------------------------- render handoff
+
+
+def _render_file(stored: dict[str, Any] | None, what: str) -> dict[str, Any]:
+    """Project a stored internal storyboard onto the renderer's schema.
+
+    Projected on read rather than stored: the renderer's schema is theirs to change,
+    and re-deriving from the internal storyboard costs nothing at feed scale while a
+    stored copy would go stale the moment their version moves.
+    """
+    if not stored:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"{what} has no storyboard")
+    try:
+        payload, _ = emit(Storyboard.model_validate(stored))
+    except (RenderContractInvalid, StoryboardInvalid) as invalid:
+        # Our bug, not the renderer's: something got stored that cannot be projected.
+        log.error("cannot project %s onto the render contract: %s", what, invalid.errors)
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            {"error": "storyboard cannot be rendered", "problems": invalid.errors},
+        ) from invalid
+    return payload
+
+
+@app.get("/posts/{post_id}/storyboard.json")
+def post_render_storyboard(post_id: str, session: SessionDep, user: UserDep) -> dict[str, Any]:
+    """``storyboard.json`` for the renderer. The only thing that crosses the boundary."""
+    post = session.get(Post, post_id)
+    if post is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "post not found")
+    return _render_file(post.storyboard, "post")
+
+
+@app.get("/jobs/{job_id}/storyboard.json")
+def job_render_storyboard(job_id: str, session: SessionDep, user: UserDep) -> dict[str, Any]:
+    """Same file, straight off a finished job, before it is ever posted."""
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+    return _render_file(job.storyboard, "job")
