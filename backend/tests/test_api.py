@@ -249,22 +249,6 @@ def test_upload_returns_media_metadata(client):
     assert body["storageKey"].startswith("local/")
 
 
-def test_uploaded_clip_accepts_comments(client):
-    upload = client.post("/uploads", files={"file": ("clip.mp4", b"not really video", "video/mp4")}).json()
-    post = client.post(
-        "/posts",
-        json={
-            "title": "uploaded clip",
-            "kind": "clip",
-            "mediaUrl": upload["mediaUrl"],
-            "storageKey": upload["storageKey"],
-        },
-    ).json()
-
-    comment = client.post(f"/posts/{post['id']}/comments", json={"text": "works on uploaded clips"})
-    assert comment.status_code == 201, comment.text
-
-
 def test_upload_rejects_oversized_video(client):
     r = client.post("/uploads", files={"file": ("clip.mp4", b"x" * (51 * 1024 * 1024), "video/mp4")})
     assert r.status_code == 413

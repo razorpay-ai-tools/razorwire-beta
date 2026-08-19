@@ -93,7 +93,7 @@ export function ActionRail({
   }
 
   return (
-    <div className={`pointer-events-none absolute inset-0 ${sheetOpen ? 'z-60' : 'z-30'}`}>
+    <div className="pointer-events-none absolute inset-0 z-30">
       <div className={`pointer-events-auto absolute flex flex-col items-center ${anchorClassName}`}>
         <RailButton
           icon="bolt"
