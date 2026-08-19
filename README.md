@@ -24,23 +24,44 @@ Repo: [`razorpay-ai-tools/razorwire-beta`](https://github.com/razorpay-ai-tools/
 
 ## Run it
 
-Two processes. Node serves the web app, Python serves the API.
+One command starts both servers:
 
 ```bash
-# 1. backend  (http://localhost:8000, OpenAPI at /docs)
-cd backend
-cp ../.env.example .env                      # then fill ANTHROPIC_API_KEY
-echo 'DEV_AUTH_EMAIL=you@razorpay.com' >> .env
-uv sync
-uv run uvicorn app.main:app --reload --port 8000
-
-# 2. web app  (http://localhost:3000)
-npm install
-npm run dev
+npm run dev:all
 ```
 
-`DEV_AUTH_EMAIL` is the local auth bypass. Unset, the API requires a Google ID token
-restricted to the `razorpay.com` hosted domain.
+It creates missing local env files, installs missing dependencies, then starts:
+
+- web app: `http://localhost:3000`
+- backend API: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+
+Config files:
+
+- copy `backend/.env.example` to `backend/.env`
+- copy `.env.example` to `.env.local`
+
+`backend/.env`:
+
+```env
+DATABASE_URL=sqlite:///./razorwire.db
+WEB_ORIGIN=http://localhost:3000
+DEV_AUTH_EMAIL=you@razorpay.com
+GOOGLE_CLIENT_ID=
+ALLOWED_HD=razorpay.com
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-5
+MEDIA_DIR=./.storage
+```
+
+`.env.local`:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+`DEV_AUTH_EMAIL` is the local auth bypass. Unset, the API requires a Google ID
+token restricted to the `razorpay.com` hosted domain.
 
 For shared state, replace the default SQLite `DATABASE_URL` with a hosted Postgres URL
 from Supabase or Neon. See [`docs/STORAGE.md`](docs/STORAGE.md).
