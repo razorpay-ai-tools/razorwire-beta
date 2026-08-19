@@ -42,6 +42,16 @@ npm run dev
 `DEV_AUTH_EMAIL` is the local auth bypass. Unset, the API requires a Google ID token
 restricted to the `razorpay.com` hosted domain.
 
+For shared state, replace the default SQLite `DATABASE_URL` with a hosted Postgres URL
+from Supabase or Neon. See [`docs/STORAGE.md`](docs/STORAGE.md).
+
+To prove cross-user consistency after pointing at Supabase:
+
+```bash
+cd backend
+.venv/bin/python scripts/check_shared_storage.py
+```
+
 ## Verify
 
 ```bash
@@ -103,7 +113,7 @@ backend/
   app/aidocs.py        fetch a doc by id, normalise to citable sections
   app/pipeline.py      Claude script stage; validation errors fed back for self-repair
   app/main.py          feed, posts, likes, saves, comments, views, uploads, jobs
-  app/models.py        six SQLite tables; reaction counts derived, never denormalised
+  app/models.py        six DB tables; reaction counts derived, never denormalised
   tests/test_api.py    35 tests
 src/
   app/page.tsx         app shell — feed is the default view, create is a sheet over it
@@ -134,7 +144,7 @@ that failed to load.
   fall back to an accent gradient — the designed path, but it does log 404s.
 - **MP4 export unbuilt**, so the `voicing` and `rendering` job states never fire.
 - **Uploads go to local disk** through the app. Fine for one box; presign beyond that.
-- **No migrations.** `rm backend/razorwire.db` is the reset.
+- **No migrations.** Fresh DBs use `create_all`; add Alembic after the schema stabilises.
 - **Diagram legibility at 360px**: a 7-node vertical graph letterboxes to roughly 11px
   labels. Check on a real phone before trusting it; the node cap is what keeps it this
   side of readable.
