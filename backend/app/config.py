@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.6-flash"
 
     # --- slack ingestion ------------------------------------------------------
     #: Restored here for the same reason as `work_dir` below: PR #5 added these and
