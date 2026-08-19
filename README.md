@@ -92,6 +92,8 @@ from Supabase or Neon. See [`docs/STORAGE.md`](docs/STORAGE.md).
 For shared video uploads, create the Supabase Storage bucket named in
 `SUPABASE_STORAGE_BUCKET` and set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`.
 
+For AiSites frontend hosting, see [`docs/AISITES.md`](docs/AISITES.md).
+
 To prove cross-user consistency after pointing at Supabase:
 
 ```bash

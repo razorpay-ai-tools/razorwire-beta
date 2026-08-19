@@ -6,6 +6,7 @@
     "dev:all": "bash scripts/dev.sh",
     "dev": "next dev",
     "build": "next build",
+    "build:aisites": "AISITES_EXPORT=1 next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "gen:types": "cd backend && uv run python scripts/emit_contract.py"
