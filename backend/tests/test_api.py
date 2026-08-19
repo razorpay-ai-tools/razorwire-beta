@@ -17,6 +17,8 @@ import pytest
 
 os.environ.setdefault("DEV_AUTH_EMAIL", "tester@razorpay.com")
 os.environ["DATABASE_URL"] = "sqlite://"  # in-memory, per session
+os.environ["SUPABASE_URL"] = ""
+os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -237,6 +239,23 @@ def test_only_the_author_can_delete(client):
 def test_upload_rejects_a_non_video(client):
     r = client.post("/uploads", files={"file": ("notes.txt", b"hello", "text/plain")})
     assert r.status_code == 415
+
+
+def test_upload_returns_media_metadata(client):
+    r = client.post("/uploads", files={"file": ("clip.mp4", b"not really video", "video/mp4")})
+    assert r.status_code == 201
+    body = r.json()
+    # The local fallback serves out of /media, but the URL leaves here absolute: the web
+    # app is on another origin, where a relative path 404s. See `_absolute_media` and
+    # `test_upload_returns_an_absolute_url`, which pins the same rule from the other side.
+    assert "/media/" in body["mediaUrl"]
+    assert body["mediaUrl"].startswith("http://")
+    assert body["storageKey"].startswith("local/")
+
+
+def test_upload_rejects_oversized_video(client):
+    r = client.post("/uploads", files={"file": ("clip.mp4", b"x" * (51 * 1024 * 1024), "video/mp4")})
+    assert r.status_code == 413
 
 
 def test_aidoc_generation_requires_a_doc_id(client):

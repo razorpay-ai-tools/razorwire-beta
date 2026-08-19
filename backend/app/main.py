@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +52,7 @@ from .models import (
 from .pipeline import run_script_stage, storyboard_to_json
 from .render_contract import RenderContractInvalid, emit, write_bundle
 from .slack import SlackUnavailable, fetch_thread, parse_permalink
+from .storage import store_upload
 from .storyboard import Storyboard, StoryboardInvalid
 
 log = logging.getLogger(__name__)
@@ -137,6 +137,8 @@ class PostCreate(_Out):
     accent: str = ""
     kind: Literal["clip", "generated"] = "clip"
     media_url: str | None = None
+    storage_key: str | None = None
+    thumbnail_url: str | None = None
     duration_ms: int | None = None
     storyboard: dict[str, Any] | None = None
     source_doc_id: str | None = None
@@ -160,6 +162,8 @@ class PostOut(_Out):
     accent: str
     kind: str
     media_url: str | None
+    storage_key: str | None
+    thumbnail_url: str | None
     duration_ms: int | None
     storyboard: dict[str, Any] | None
     source_doc_id: str | None
@@ -215,6 +219,7 @@ class JobOut(_Out):
 
 class UploadOut(_Out):
     media_url: str
+    storage_key: str
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -649,21 +654,23 @@ def delete_comment(comment_id: str, session: SessionDep, user: UserDep) -> None:
 
 @app.post("/uploads", response_model=UploadOut, status_code=status.HTTP_201_CREATED)
 def upload_media(user: UserDep, file: UploadFile = File(...)) -> UploadOut:
-    """Accept a clip and return a URL to reference from a post.
-
-    ponytail: the binary is proxied through the app onto local disk. That is fine for
-    one box and it avoids a day lost to S3 presign CORS. Move to a presigned PUT when
-    the feed is served from more than one machine.
-    """
+    """Accept a clip and return object metadata to reference from a post."""
     suffix = Path(file.filename or "clip.mp4").suffix.lower()
     if suffix not in {".mp4", ".webm", ".mov", ".m4v"}:
         raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, f"unsupported extension {suffix!r}")
+    if file.size is not None and file.size > settings.max_upload_bytes:
+        mb = settings.max_upload_bytes // (1024 * 1024)
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"video must be {mb} MB or smaller")
 
-    name = f"{user.id}_{utcnow().strftime('%Y%m%d%H%M%S%f')}{suffix}"
-    destination = MEDIA_DIR / name
-    with destination.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
-    return UploadOut(media_url=_absolute_media(f"/media/{name}"))
+    stored = store_upload(file, user.id, suffix)
+    # Supabase hands back an absolute URL already; the local-disk fallback hands back
+    # "/media/...", which resolves against the web app's origin and 404s there. One
+    # pass through `_absolute_media` covers both without the caller knowing which
+    # backend stored it.
+    return UploadOut(
+        media_url=_absolute_media(stored.media_url) or stored.media_url,
+        storage_key=stored.storage_key,
+    )
 
 
 # --------------------------------------------------------------------------- pipeline

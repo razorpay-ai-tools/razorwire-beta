@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-5"
 
     # --- slack ingestion ------------------------------------------------------
+    #: Restored here for the same reason as `work_dir` below: PR #5 added these and
+    #: `slack.py` reads them, but PR #4's config.py landed without them.
+    #:
     #: Bot token (``xoxb-``). Needs scopes: channels:history, groups:history,
     #: channels:read, users:read. The bot must also be invited to any channel it
     #: reads — Slack returns `not_in_channel` otherwise.
@@ -45,16 +48,25 @@ class Settings(BaseSettings):
         return frozenset(part.strip().lstrip("#") for part in raw if part.strip())
 
     # --- storage --------------------------------------------------------------
-    #: Uploads land here. ponytail: local disk only. Swap for S3 presigned PUT when
-    #: more than one box serves the feed.
-    #:
-    #: PUBLICLY SERVED at /media. Only finished artefacts belong here.
+    #: Uploads land here when Supabase Storage is not configured.
     media_dir: str = "./.storage"
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_storage_bucket: str = "razorwire-videos"
+    supabase_storage_public: bool = True
+    max_upload_bytes: int = 50 * 1024 * 1024
 
     #: Scratch space for one generation run: storyboard.json, scene wavs, scene pngs.
     #: Deliberately NOT mounted at a URL — it holds intermediate work derived from
     #: internal documents, and only the finished MP4 is copied into media_dir.
+    #:
+    #: Restored here: PR #5 added it and `render_contract.py` reads it, but PR #4's
+    #: config.py landed without it, so `main` fails its own render-contract tests.
     work_dir: str = "./.work"
+
+    @property
+    def supabase_storage_enabled(self) -> bool:
+        return bool(self.supabase_url and self.supabase_service_role_key and self.supabase_storage_bucket)
 
     @property
     def dev_auth_enabled(self) -> bool:
