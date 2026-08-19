@@ -10,8 +10,15 @@ Team **Unrealistic Expectations** — Shivang · Sarthak · Saksham · Sambhav
 Submission: [doc_r523noskel555f7f](https://aidocs.razorpay.com/app/d/doc_r523noskel555f7f)
 Design record: [`docs/DESIGN.md`](docs/DESIGN.md) · Plan: [`docs/PLAN.md`](docs/PLAN.md)
 
-> **Internal only.** Do not add a public remote. `src/lib/fixtures/` contains internal
-> architecture detail.
+Repo: [`razorpay-ai-tools/razorwire-beta`](https://github.com/razorpay-ai-tools/razorwire-beta)
+
+> **This repo is public.** Never commit credentials, customer data, PII, or production
+> config. `.env` files are gitignored — keep it that way.
+>
+> The org enforces SAML SSO, so a token or SSH key must be explicitly authorized for
+> `razorpay-ai-tools` before it can push. A global git config here rewrites
+> `https://github.com/` to SSH, so the remote deliberately carries a username
+> (`https://<you>@github.com/...`) to stay on HTTPS and bypass that rewrite.
 
 ---
 
