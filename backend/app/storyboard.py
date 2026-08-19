@@ -34,8 +34,39 @@ MAX_MERMAID_NODES = 7
 MAX_SPOKEN_SECONDS = 75  # 60s target, 75s hard ceiling
 _WORDS_PER_SECOND = 160 / 60
 
+# --- limits the renderer imposes -------------------------------------------------
+# These originate in the renderer's storyboard.json spec, not here. They live in this
+# module because generation has to obey them: a scene count or bullet count that
+# overshoots cannot be fixed when projecting to the wire format without silently
+# dropping content, so the model must be held to the tighter number up front.
+# `render_contract` imports them rather than restating them.
+MIN_SCENES = 4
+MAX_SCENES = 6
+MAX_BULLETS = 4
+MAX_NARRATION_SENTENCES = 2
+
+#: Mermaid graph directions the renderer parses. `TD` is Mermaid's own synonym for
+#: `TB`, and it reads better in a 9:16 frame.
+ALLOWED_MERMAID_DIRECTIONS = ("LR", "TB", "TD")
+_MERMAID_HEADER = re.compile(r"^\s*(?:graph|flowchart)\s+(LR|RL|TB|TD|BT)\b", re.IGNORECASE)
+
+_SENTENCE_END = re.compile(r"[.!?]+(?:\s|$)")
+#: Scheme-qualified or www-prefixed only. A bare "razorpay.com" in prose is not
+#: something a TTS engine mangles, and matching bare domains flags ordinary sentences.
+_URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+_MARKDOWN = re.compile(r"(?:\*\*|__|`|^\s*#{1,6}\s|\[[^\]]+\]\([^)]+\)|^\s*[-*]\s)", re.MULTILINE)
+_EMOJI = re.compile(
+    "[" "\U0001f300-\U0001faff" "\U00002600-\U000027bf" "\U0001f000-\U0001f2ff" "\U0000fe0f" "]"
+)
+
 #: Scene types that assert something about the source document, so they must cite it.
 FACTUAL_SCENE_TYPES = frozenset({"bullets", "diagram", "compare", "code"})
+
+#: Sources with real provenance, where a factual scene has something to point at. An
+#: aidoc cites a section heading; a Slack thread cites "Ananya R, 14:32", because the
+#: adapter turns every message into a Section headed by its author and time. `topic`
+#: is the exception: there is no source, so there is nothing honest to cite.
+GROUNDED_SOURCE_KINDS = frozenset({"aidoc", "slack"})
 
 #: Fields the pipeline owns. Stripped from the model's view of the contract.
 PIPELINE_OWNED_FIELDS = ("durationMs", "clipId")
@@ -82,8 +113,10 @@ class _SceneBase(_Model):
         min_length=10,
         max_length=420,
         description=(
-            "What the voice says over this scene. Plain spoken prose. No markdown, no stage "
-            "directions. Expand abbreviations a voice would stumble on."
+            "What the voice says over this scene. Plain spoken prose, at most "
+            f"{MAX_NARRATION_SENTENCES} sentences. No markdown, no emoji, no URLs (the voice "
+            "reads them out literally), no stage directions. Expand abbreviations a voice "
+            "would stumble on."
         ),
     )
     cite: str | None = Field(
@@ -119,7 +152,7 @@ class BulletsScene(_SceneBase):
     heading: _Heading
     bullets: list[Annotated[str, Field(min_length=3, max_length=80)]] = Field(
         min_length=2,
-        max_length=5,
+        max_length=MAX_BULLETS,
         description="Short phrases, not sentences. These are read on screen, not aloud.",
     )
 
@@ -168,9 +201,11 @@ class StoryboardMeta(_Model):
 
 
 class StoryboardSource(_Model):
-    kind: Literal["aidoc", "topic"]
+    kind: Literal["aidoc", "slack", "topic"]
     doc_id: str | None = Field(default=None, description="Required when kind is aidoc.")
-    url: str | None = None
+    url: str | None = Field(
+        default=None, description="Required when kind is slack: the thread permalink."
+    )
     title: str | None = None
 
 
@@ -178,7 +213,12 @@ class Storyboard(_Model):
     meta: StoryboardMeta
     source: StoryboardSource
     scenes: list[Scene] = Field(
-        min_length=3, max_length=8, description="3-8 scenes, under 60 seconds spoken in total."
+        min_length=MIN_SCENES,
+        max_length=MAX_SCENES,
+        description=(
+            f"{MIN_SCENES}-{MAX_SCENES} scenes, under 60 seconds spoken in total. "
+            "Byte-sized reel."
+        ),
     )
 
 
@@ -189,6 +229,78 @@ def spoken_seconds(sb: Storyboard) -> float:
     """Rough spoken length. Rejects a runaway script before we pay for TTS."""
     words = sum(len(scene.narration.split()) for scene in sb.scenes)
     return words / _WORDS_PER_SECOND
+
+
+def sentence_count(text: str) -> int:
+    """Count sentences the way the renderer's rule 2 means it — terminated or trailing."""
+    stripped = text.strip()
+    if not stripped:
+        return 0
+    count = len(_SENTENCE_END.findall(stripped))
+    # a trailing fragment with no terminator still reads as a sentence
+    if not _SENTENCE_END.search(stripped[-2:]):
+        count += 1
+    return max(count, 1)
+
+
+def check_narration(at: str, narration: str, errors: list[str]) -> None:
+    """Append every narration problem found. Shared with ``render_contract``.
+
+    These are not expressible in a schema: sentence count needs parsing, and the URL
+    and emoji rules exist because the narration is spoken by a TTS engine that reads
+    "https colon slash slash" out loud rather than skipping it.
+    """
+    if not narration.strip():
+        errors.append(f"{at}.narration is empty")
+        return
+
+    sentences = sentence_count(narration)
+    if sentences > MAX_NARRATION_SENTENCES:
+        errors.append(
+            f"{at}.narration is {sentences} sentences, max {MAX_NARRATION_SENTENCES}. "
+            "Split the scene or cut a clause"
+        )
+    if _URL.search(narration):
+        errors.append(f"{at}.narration contains a URL, which the voice reads out literally")
+    if _MARKDOWN.search(narration):
+        errors.append(f"{at}.narration contains markdown, it is spoken aloud not rendered")
+    if _EMOJI.search(narration):
+        errors.append(f"{at}.narration contains an emoji, which the voice cannot read")
+
+
+def mermaid_direction(src: str) -> str | None:
+    """The declared graph direction, or None when there is no parsable header."""
+    match = _MERMAID_HEADER.match(src)
+    return match.group(1).upper() if match else None
+
+
+def check_mermaid(at: str, src: str, errors: list[str]) -> None:
+    """Append every diagram problem found. Shared with ``render_contract``.
+
+    The renderer validates diagrams itself and rejects the whole file loudly on a bad
+    one, so a malformed diagram that reaches it costs a failed job. Catching it here
+    turns that into a retry the model can fix.
+    """
+    direction = mermaid_direction(src)
+    if direction is None:
+        errors.append(
+            f"{at}.mermaid must start with 'graph LR' or 'graph TB' — "
+            "the renderer rejects anything it cannot parse"
+        )
+    elif direction not in ALLOWED_MERMAID_DIRECTIONS:
+        errors.append(
+            f"{at}.mermaid direction '{direction}' is not supported, "
+            f"use one of {', '.join(ALLOWED_MERMAID_DIRECTIONS)}"
+        )
+
+    nodes = mermaid_node_count(src)
+    if nodes > MAX_MERMAID_NODES:
+        errors.append(
+            f"{at}.mermaid has {nodes} nodes, max {MAX_MERMAID_NODES}. "
+            "Split the scene or downgrade it to bullets"
+        )
+    elif nodes < 2:
+        errors.append(f"{at}.mermaid parsed to {nodes} nodes, probably malformed")
 
 
 _NODE_PATTERNS = (
@@ -248,21 +360,24 @@ def validate_storyboard(data: Any, stage: Literal["script", "render"] = "script"
             if scene.broll is not None and not has_clip:
                 errors.append(f"{at}.broll.clipId missing, run the visual resolver first")
 
-        if isinstance(scene, DiagramScene):
-            nodes = mermaid_node_count(scene.mermaid)
-            if nodes > MAX_MERMAID_NODES:
-                errors.append(
-                    f"{at}.mermaid has {nodes} nodes, max {MAX_MERMAID_NODES}. "
-                    "Split the scene or downgrade it to bullets"
-                )
-            elif nodes < 2:
-                errors.append(f"{at}.mermaid parsed to {nodes} nodes, probably malformed")
+        check_narration(at, scene.narration, errors)
 
-        if sb.source.kind == "aidoc" and scene.type in FACTUAL_SCENE_TYPES and not scene.cite:
-            errors.append(f"{at} ({scene.type}) needs a cite, every factual claim traces to a section")
+        if isinstance(scene, DiagramScene):
+            check_mermaid(at, scene.mermaid, errors)
+
+        if (
+            sb.source.kind in GROUNDED_SOURCE_KINDS
+            and scene.type in FACTUAL_SCENE_TYPES
+            and not scene.cite
+        ):
+            errors.append(
+                f"{at} ({scene.type}) needs a cite, every factual claim traces to its source"
+            )
 
     if sb.source.kind == "aidoc" and not sb.source.doc_id:
         errors.append("source.docId is required when kind is aidoc")
+    if sb.source.kind == "slack" and not sb.source.url:
+        errors.append("source.url is required when kind is slack, so a viewer can find the thread")
 
     seconds = spoken_seconds(sb)
     if seconds > MAX_SPOKEN_SECONDS:
