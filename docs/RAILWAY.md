@@ -51,10 +51,13 @@ ANTHROPIC_MODEL=claude-sonnet-5
 ANTHROPIC_API_KEY=...
 GEMINI_MODEL=gemini-3.6-flash
 GEMINI_API_KEY=...
+AIDOCS_SERVER=https://aidocs.razorpay.com
+AIDOCS_TOKEN=...
 ```
 
 AI generation uses Anthropic first when `ANTHROPIC_API_KEY` is set, then Gemini
-when `GEMINI_API_KEY` is set. Video upload only needs the Supabase values.
+when `GEMINI_API_KEY` is set. AiDoc fetch uses the `aidocs` CLI installed at
+container start plus `AIDOCS_TOKEN`. Video upload only needs the Supabase values.
 
 ## Redeploy backend from local checkout
 

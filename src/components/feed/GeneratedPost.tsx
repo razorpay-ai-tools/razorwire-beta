@@ -13,6 +13,7 @@ import { SceneView } from '@/components/scenes/SceneView';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, docHref, type Post } from '@/lib/api';
 import { ActionRail } from './ActionRail';
+import { CharacterOverlay } from './CharacterOverlay';
 import {
   MuteButton,
   NarrationNotice,
@@ -260,6 +261,8 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
       <div className="pointer-events-none absolute inset-0 z-20">
         <SceneView scene={scene} active={active} />
       </div>
+
+      <CharacterOverlay scene={scene} caption={caption} index={index} active={active} />
 
       {/* Tap thirds: back, pause, forward. Keyboard equivalents live on window. */}
       <div className="absolute inset-0 z-10 grid grid-cols-3">

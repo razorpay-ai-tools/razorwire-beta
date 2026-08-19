@@ -25,6 +25,8 @@ import subprocess
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
+from .config import settings
+
 log = logging.getLogger(__name__)
 
 #: Tags whose text content is markup, not prose.
@@ -218,9 +220,15 @@ def parse_doc_html(doc_id: str, html: str) -> DocContent:
 def _pull_html(doc_id: str) -> str:
     if shutil.which("aidocs") is None:
         raise AidocsUnavailable("the aidocs CLI is not on PATH")
+    command = ["aidocs"]
+    if settings.aidocs_server:
+        command.extend(["--server", settings.aidocs_server])
+    if settings.aidocs_token:
+        command.extend(["--token", settings.aidocs_token])
+    command.extend(["docs", "pull", doc_id])
     try:
         result = subprocess.run(  # noqa: S603 - fixed argv, doc_id is validated by the caller
-            ["aidocs", "docs", "pull", doc_id],
+            command,
             capture_output=True,
             text=True,
             timeout=_FETCH_TIMEOUT_SECONDS,
