@@ -27,6 +27,7 @@ def test_gemini_fallback_generates_valid_storyboard(monkeypatch):
         assert settings.gemini_model in url
         assert kwargs["params"]["key"] == "gemini-test-key"
         assert kwargs["json"]["generationConfig"]["responseMimeType"] == "application/json"
+        assert '"meta"' in kwargs["json"]["contents"][0]["parts"][0]["text"]
         return Response()
 
     monkeypatch.setattr(settings, "anthropic_api_key", "")

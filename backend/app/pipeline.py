@@ -252,9 +252,11 @@ def _run_gemini_script_stage(
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{settings.gemini_model}:generateContent"
     )
+    schema = json.dumps(tool_input_schema(), separators=(",", ":"))
     prompt = (
         _user_prompt(kind, text, doc_title)
-        + "\n\nReturn only the storyboard JSON object. Do not wrap it in markdown."
+        + "\n\nReturn only a JSON object matching this schema. Do not wrap it in markdown:\n"
+        + schema
     )
     last_errors: list[str] = ["model produced no JSON"]
 
