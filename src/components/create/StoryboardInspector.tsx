@@ -13,10 +13,9 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { docHref } from '@/lib/api';
 import type { Scene, SceneType, Storyboard } from '@/lib/storyboard.types';
 import { CitationChip, Icon } from '@/components/ui';
-
-const AIDOCS_ORIGIN = 'https://aidocs.razorpay.com';
 
 /** Scene types the contract requires a `cite` on, because they state something. */
 const FACTUAL: ReadonlySet<SceneType> = new Set(['bullets', 'diagram', 'compare', 'code']);
@@ -24,11 +23,6 @@ const FACTUAL: ReadonlySet<SceneType> = new Set(['bullets', 'diagram', 'compare'
 function headingOf(scene: Scene): string | null {
   if (scene.type === 'outro') return scene.cta;
   return scene.heading ?? null;
-}
-
-function sourceHref(source: Storyboard['source']): string | null {
-  if (source.url) return source.url;
-  return source.docId ? `${AIDOCS_ORIGIN}/app/d/${source.docId}` : null;
 }
 
 interface StoryboardInspectorProps {
@@ -41,7 +35,7 @@ export function StoryboardInspector({ storyboard, currentIndex }: StoryboardInsp
   const { meta, source, scenes } = storyboard;
   const cited = scenes.filter((scene) => scene.cite).length;
   const unsupported = scenes.filter((scene) => !scene.cite && FACTUAL.has(scene.type)).length;
-  const href = sourceHref(source);
+  const href = docHref(storyboard);
 
   const activeRef = useRef<HTMLLIElement | null>(null);
 

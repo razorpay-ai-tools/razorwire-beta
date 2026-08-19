@@ -198,6 +198,23 @@ export function sceneDurationMs(scene: Scene): number {
   return Math.max(2600, Math.round((words / (160 / 60)) * 1000));
 }
 
+const AIDOCS_BASE = 'https://aidocs.razorpay.com/app/d';
+
+/**
+ * Where to send someone who wants the source document.
+ *
+ * Derived from `docId` rather than requiring `source.url`, because the contract
+ * guarantees a `docId` for every aidoc source but `url` is only populated when the
+ * ingest stage happened to resolve one. Requiring `url` meant the feed's "Spec"
+ * action silently did not render for any post created outside that path.
+ */
+export function docHref(storyboard: Storyboard | null): string | null {
+  const source = storyboard?.source;
+  if (!source || source.kind !== 'aidoc') return null;
+  if (source.url) return source.url;
+  return source.docId ? `${AIDOCS_BASE}/${source.docId}` : null;
+}
+
 /** Public URL for a cached Veo background clip, or null when the scene has no footage. */
 export function brollSrc(scene: Scene): string | null {
   if (!scene.broll) return null;

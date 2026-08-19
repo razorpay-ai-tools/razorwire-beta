@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { SceneView } from '@/components/scenes/SceneView';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
-import { brollSrc, type Post } from '@/lib/api';
+import { brollSrc, docHref, type Post } from '@/lib/api';
 import { ActionRail } from './ActionRail';
 import { MuteButton, PostMeta, accentBackdrop, useMute } from './chrome';
 import { useReel } from './useReel';
@@ -117,7 +117,7 @@ export function GeneratedPost({ post, active }: { post: Post; active: boolean })
         <div className="absolute inset-x-0 bottom-0 z-30 pb-16 pl-4 pr-20">
           <PostMeta post={post} />
         </div>
-        <ActionRail post={post} specHref={post.storyboard?.source.url ?? null} />
+        <ActionRail post={post} specHref={docHref(post.storyboard)} />
       </article>
     );
   }
@@ -134,13 +134,19 @@ export function GeneratedPost({ post, active }: { post: Post; active: boolean })
        * SceneShell owns its own safe-area padding AND the citation chip for the
        * current scene (scenes/SceneShell.tsx), so this layer is edge to edge and the
        * feed does not render a second chip.
+       *
+       * ABOVE the tap zones, not below. This layer is pointer-events-none, so a tap on
+       * empty scene area still falls through to the zones underneath — but anything a
+       * scene makes interactive (the outro's link, the code scene's scroll region)
+       * re-enables pointer events and therefore actually receives its click. With the
+       * zones on top, the outro's "Read the full spec" button was visible and dead.
        */}
-      <div className="pointer-events-none absolute inset-0 z-10">
+      <div className="pointer-events-none absolute inset-0 z-20">
         <SceneView scene={scene} active={active} />
       </div>
 
       {/* Tap thirds: back, pause, forward. Keyboard equivalents live on window. */}
-      <div className="absolute inset-0 z-20 grid grid-cols-3">
+      <div className="absolute inset-0 z-10 grid grid-cols-3">
         <button
           type="button"
           tabIndex={active ? 0 : -1}
@@ -203,7 +209,7 @@ export function GeneratedPost({ post, active }: { post: Post; active: boolean })
         ) : null}
       </div>
 
-      <ActionRail post={post} specHref={post.storyboard?.source.url ?? null} />
+      <ActionRail post={post} specHref={docHref(post.storyboard)} />
     </article>
   );
 }

@@ -37,7 +37,9 @@ export function OutroScene({ scene, active }: { scene: OutroSceneData; active: b
             href={scene.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex max-w-full items-center justify-center gap-2 rounded-2xl bg-brand-500 px-5 py-3.5 text-[15px] font-semibold text-white shadow-lg shadow-brand-700/40 transition hover:bg-brand-600"
+            /* pointer-events-auto: the scene layer is inert so taps fall through to the
+               feed's scene-stepping zones. This is the one thing here that must not. */
+            className="pointer-events-auto inline-flex max-w-full items-center justify-center gap-2 rounded-2xl bg-brand-500 px-5 py-3.5 text-[15px] font-semibold text-white shadow-lg shadow-brand-700/40 transition hover:bg-brand-600"
           >
             <Icon name="doc" label={null} className="size-4 shrink-0" />
             <span className="line-clamp-2 text-left">{scene.cta}</span>
