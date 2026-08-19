@@ -35,7 +35,13 @@ import { SceneView } from '@/components/scenes/SceneView';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, type Post } from '@/lib/api';
 import { Broll } from './GeneratedPost';
-import { MuteButton, NarrationRateButton, accentBackdrop, useMute } from './chrome';
+import {
+  MuteButton,
+  NarrationNotice,
+  NarrationRateButton,
+  accentBackdrop,
+  useMute,
+} from './chrome';
 import { DesktopPanel } from './DesktopPanel';
 import { useNarration } from './useNarration';
 import { useReel, type Reel } from './useReel';
@@ -316,6 +322,7 @@ function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel:
 
           {/* Grouped so the pair stays right-aligned when the rate button is hidden. */}
           <div className="ml-auto flex items-center gap-2">
+            <NarrationNotice />
             <NarrationRateButton />
             <MuteButton />
           </div>

@@ -21,6 +21,7 @@ import {
 import { CategoryChip, Icon } from '@/components/ui';
 import { compactCount, initialsOf, type Post } from '@/lib/api';
 import { nextRate } from './narration';
+import { primeSpeech, useSpeechVoiceCount } from './useNarration';
 
 interface MuteState {
   muted: boolean;
@@ -55,8 +56,16 @@ export function MuteProvider({ children }: { children: ReactNode }) {
   // silently fail to start on first paint.
   const [muted, setMuted] = useState(true);
   const [rate, setRate] = useState<number>(1);
-  const toggle = useCallback(() => setMuted((value) => !value), []);
   const cycleRate = useCallback(() => setRate((current) => nextRate(current)), []);
+
+  // Priming runs here, in the click itself. Narration starts in an effect a tick
+  // later, which is outside the gesture Safari and iOS require, so without this the
+  // reel played through in silence with no error to find. Harmless when muting, and
+  // kept out of the state updater, which has to stay pure.
+  const toggle = useCallback(() => {
+    primeSpeech();
+    setMuted((value) => !value);
+  }, []);
 
   // m mutes, s changes speed. Both belong to the feed rather than to one post, so a
   // preference survives scrolling to the next one.
@@ -65,6 +74,8 @@ export function MuteProvider({ children }: { children: ReactNode }) {
       if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
       if (event.key === 'm' || event.key === 'M') {
         event.preventDefault();
+        // A keystroke is a gesture too, so prime from here as well.
+        primeSpeech();
         setMuted((value) => !value);
       } else if (event.key === 's' || event.key === 'S') {
         event.preventDefault();
@@ -102,6 +113,31 @@ export function MuteButton({ className = '' }: { className?: string }) {
       <span>{muted ? 'Muted' : 'Sound on'}</span>
       <span className="sr-only">, press M to toggle</span>
     </button>
+  );
+}
+
+/**
+ * Says so when this browser cannot speak.
+ *
+ * A synthesizer with no voices returns no sound and no error, so an unmuted reel looked
+ * broken in exactly the way a bug looks. Naming it turns "the app is broken" into "this
+ * browser has no voices", which the reader can act on — and the captions are still the
+ * whole text, so nothing is actually lost.
+ */
+export function NarrationNotice() {
+  const { muted } = useMute();
+  const voices = useSpeechVoiceCount();
+  if (muted || voices > 0) return null;
+
+  return (
+    <span
+      role="status"
+      title="Narration uses the browser's speech synthesizer, which has no voices installed here. The captions carry the same words."
+      className="panel pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-warning"
+    >
+      <Icon name="alert" label={null} className="size-3.5 shrink-0" />
+      No voices — captions only
+    </span>
   );
 }
 

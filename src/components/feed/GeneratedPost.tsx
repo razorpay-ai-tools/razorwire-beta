@@ -13,7 +13,14 @@ import { SceneView } from '@/components/scenes/SceneView';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, docHref, type Post } from '@/lib/api';
 import { ActionRail } from './ActionRail';
-import { MuteButton, NarrationRateButton, PostMeta, accentBackdrop, useMute } from './chrome';
+import {
+  MuteButton,
+  NarrationNotice,
+  NarrationRateButton,
+  PostMeta,
+  accentBackdrop,
+  useMute,
+} from './chrome';
 import { useNarration } from './useNarration';
 import { useReel } from './useReel';
 
@@ -305,6 +312,7 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
 
           {/* Grouped so the pair stays right-aligned when the rate button is hidden. */}
           <div className="ml-auto flex items-center gap-2">
+            <NarrationNotice />
             <NarrationRateButton />
             <MuteButton />
           </div>

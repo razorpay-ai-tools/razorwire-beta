@@ -18,7 +18,7 @@
  * timer paces the reel; exactly one of the two clocks is ever running.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { pickVoice, speakableText } from './narration';
 
 /**
@@ -45,6 +45,33 @@ function watchdogMs(text: string, rate: number): number {
   return expected * 2 + 3000;
 }
 
+/**
+ * Unlock speech inside a user gesture.
+ *
+ * Safari and iOS only allow speech that *starts* in a gesture. Ours starts in an effect
+ * a tick after the click that unmuted, which is outside it, so the whole reel played
+ * silently with no error anywhere. Speaking one empty utterance from inside the click
+ * itself is what unlocks the queue for everything after it. Chrome does not need this
+ * and ignores it.
+ *
+ * Exported for the mute control, which owns the only gesture we are guaranteed.
+ */
+export function primeSpeech(): void {
+  const synth = typeof window === 'undefined' ? undefined : window.speechSynthesis;
+  if (!synth) return;
+  try {
+    synth.speak(new SpeechSynthesisUtterance(''));
+    if (synth.paused) synth.resume();
+  } catch {
+    // A browser that refuses an empty utterance is not a reason to block unmuting.
+  }
+}
+
+/** Dev-only trace. The failure modes here are all invisible: no error, no sound. */
+function trace(...parts: unknown[]): void {
+  if (process.env.NODE_ENV !== 'production') console.debug('[narration]', ...parts);
+}
+
 function whenVoicesReady(synth: SpeechSynthesis): Promise<void> {
   if (synth.getVoices().length > 0) return Promise.resolve();
 
@@ -57,6 +84,37 @@ function whenVoicesReady(synth: SpeechSynthesis): Promise<void> {
     const timer = window.setTimeout(done, VOICES_READY_TIMEOUT_MS);
     synth.addEventListener('voiceschanged', done);
   });
+}
+
+/**
+ * How many speech voices this browser has, live.
+ *
+ * Zero is a real state, not a loading state: Chromium builds without the TTS component,
+ * a Linux box with no speech-dispatcher, and a locked-down profile all report an empty
+ * list forever. Narration then produces no sound and no error, which is indistinguishable
+ * from a bug — so the UI says so instead of pretending. Counted here rather than inside
+ * `useNarration` because the notice has to be visible before anything is spoken.
+ */
+export function useSpeechVoiceCount(): number {
+  const [count, setCount] = useState<number>(0);
+
+  useEffect(() => {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+
+    const read = () => setCount(synth.getVoices().length);
+    read();
+    synth.addEventListener('voiceschanged', read);
+    // Chrome populates the list asynchronously and does not always fire the event.
+    const timer = window.setTimeout(read, VOICES_READY_TIMEOUT_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+      synth.removeEventListener('voiceschanged', read);
+    };
+  }, []);
+
+  return count;
 }
 
 interface NarrationOptions {
@@ -97,14 +155,29 @@ export function useNarration({ text, enabled, rate, onDone }: NarrationOptions):
       if (cancelled) return;
 
       const utterance = new SpeechSynthesisUtterance(speakableText(line));
-      const voice = pickVoice(speech.getVoices());
+      const voices = speech.getVoices();
+      const voice = pickVoice(voices);
       if (voice) utterance.voice = voice;
+
+      trace('speak', {
+        voices: voices.length,
+        using: voice ? `${voice.name} (${voice.localService ? 'local' : 'network'})` : 'browser default',
+        rate,
+        speaking: speech.speaking,
+        pending: speech.pending,
+        paused: speech.paused,
+        text: speakableText(line).slice(0, 60),
+      });
+      utterance.onstart = () => trace('started');
       utterance.rate = rate;
       // Slightly under the default. At 1.0 the neural voices land every sentence on the
       // same note, which is the thing that reads as synthetic more than the timbre does.
       utterance.pitch = 0.95;
 
-      utterance.onend = finish;
+      utterance.onend = () => {
+        trace('ended');
+        finish();
+      };
 
       /*
        * An interruption is NOT the line finishing.
@@ -116,11 +189,15 @@ export function useNarration({ text, enabled, rate, onDone }: NarrationOptions):
        * cannot say this line, and there the reel must move on rather than freeze.
        */
       utterance.onerror = (event) => {
+        trace('error', event.error);
         if (event.error === 'interrupted' || event.error === 'canceled') return;
         finish();
       };
 
-      watchdog = window.setTimeout(finish, watchdogMs(line, rate));
+      watchdog = window.setTimeout(() => {
+        trace('watchdog fired — the voice never spoke and never errored');
+        finish();
+      }, watchdogMs(line, rate));
 
       // Only clear the queue when there IS one. Chrome drops an utterance that is spoken
       // in the same tick as a `cancel()`, so an unconditional cancel here silenced the
