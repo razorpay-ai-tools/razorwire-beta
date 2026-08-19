@@ -20,14 +20,24 @@ import {
 } from 'react';
 import { CategoryChip, Icon } from '@/components/ui';
 import { compactCount, initialsOf, type Post } from '@/lib/api';
+import { nextRate } from './narration';
+import { primeSpeech, useSpeechVoiceCount } from './useNarration';
 
 interface MuteState {
   muted: boolean;
   toggle: () => void;
+  /** Narration speed. Lives here with mute because both are the same preference. */
+  rate: number;
+  cycleRate: () => void;
 }
 
 /** Default keeps a post renderable outside the feed; `FeedScreen` supplies the real one. */
-const MuteContext = createContext<MuteState>({ muted: true, toggle: () => {} });
+const MuteContext = createContext<MuteState>({
+  muted: true,
+  toggle: () => {},
+  rate: 1,
+  cycleRate: () => {},
+});
 
 /** True when the keystroke belongs to whatever the user is typing in. */
 function isTyping(target: EventTarget | null): boolean {
@@ -45,21 +55,39 @@ export function MuteProvider({ children }: { children: ReactNode }) {
   // Muted by default: browsers block unmuted autoplay, so anything else would
   // silently fail to start on first paint.
   const [muted, setMuted] = useState(true);
-  const toggle = useCallback(() => setMuted((value) => !value), []);
+  const [rate, setRate] = useState<number>(1);
+  const cycleRate = useCallback(() => setRate((current) => nextRate(current)), []);
 
+  // Priming runs here, in the click itself. Narration starts in an effect a tick
+  // later, which is outside the gesture Safari and iOS require, so without this the
+  // reel played through in silence with no error to find. Harmless when muting, and
+  // kept out of the state updater, which has to stay pure.
+  const toggle = useCallback(() => {
+    primeSpeech();
+    setMuted((value) => !value);
+  }, []);
+
+  // m mutes, s changes speed. Both belong to the feed rather than to one post, so a
+  // preference survives scrolling to the next one.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key !== 'm' && event.key !== 'M') return;
       if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
-      event.preventDefault();
-      setMuted((value) => !value);
+      if (event.key === 'm' || event.key === 'M') {
+        event.preventDefault();
+        // A keystroke is a gesture too, so prime from here as well.
+        primeSpeech();
+        setMuted((value) => !value);
+      } else if (event.key === 's' || event.key === 'S') {
+        event.preventDefault();
+        setRate((current) => nextRate(current));
+      }
     }
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const value = useMemo(() => ({ muted, toggle }), [muted, toggle]);
+  const value = useMemo(() => ({ muted, toggle, rate, cycleRate }), [muted, toggle, rate, cycleRate]);
   return <MuteContext.Provider value={value}>{children}</MuteContext.Provider>;
 }
 
@@ -84,6 +112,55 @@ export function MuteButton({ className = '' }: { className?: string }) {
       <Icon name={muted ? 'muted' : 'unmuted'} label={null} className="size-3.5 shrink-0" />
       <span>{muted ? 'Muted' : 'Sound on'}</span>
       <span className="sr-only">, press M to toggle</span>
+    </button>
+  );
+}
+
+/**
+ * Says so when this browser cannot speak.
+ *
+ * A synthesizer with no voices returns no sound and no error, so an unmuted reel looked
+ * broken in exactly the way a bug looks. Naming it turns "the app is broken" into "this
+ * browser has no voices", which the reader can act on — and the captions are still the
+ * whole text, so nothing is actually lost.
+ */
+export function NarrationNotice() {
+  const { muted } = useMute();
+  const voices = useSpeechVoiceCount();
+  if (muted || voices > 0) return null;
+
+  return (
+    <span
+      role="status"
+      title="Narration uses the browser's speech synthesizer, which has no voices installed here. The captions carry the same words."
+      className="panel pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-warning"
+    >
+      <Icon name="alert" label={null} className="size-3.5 shrink-0" />
+      No voices — captions only
+    </span>
+  );
+}
+
+/**
+ * Narration speed. Only shown once the narration can be heard — a speed control on a
+ * muted reel is a control for nothing, and it would sit next to the unmute button
+ * competing for the same glance.
+ *
+ * The rate also paces the reel, because scenes advance when the voice finishes a line.
+ * So this is a speed control for the whole thing, not just for the voice.
+ */
+export function NarrationRateButton({ className = '' }: { className?: string }) {
+  const { muted, rate, cycleRate } = useMute();
+  if (muted) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={cycleRate}
+      className={`panel pointer-events-auto flex items-center gap-1 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-200 transition-colors hover:text-white ${className}`}
+    >
+      <span className="tabular-nums">{rate}×</span>
+      <span className="sr-only">narration speed, press S to change</span>
     </button>
   );
 }

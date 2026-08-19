@@ -114,6 +114,7 @@ ALTER TABLE posts ADD COLUMN channel_id VARCHAR;
 ```bash
 npm run lint && npx tsc --noEmit && npm run build
 node src/components/scenes/__check.mts     # scene dispatcher + mermaid fallback
+node src/components/feed/__narration-check.mts   # narration pacing + speech rewrites
 cd backend && uv run pytest -q             # 123 tests
 ```
 

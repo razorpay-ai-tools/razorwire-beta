@@ -99,10 +99,16 @@ export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
   const activeFilter = useMemo(() => JSON.parse(filterKey) as FeedFilter, [filterKey]);
   const cacheKey = cacheKeyFor(filterKey);
 
-  const [initialPage] = useState<FeedPage | null>(() => readCachedFeed(cacheKeyFor(filterKey)));
-  const [posts, setPosts] = useState<Post[]>(() => initialPage?.items ?? []);
-  const [cursor, setCursor] = useState<string | null>(() => initialPage?.nextCursor ?? null);
-  const [phase, setPhase] = useState<Phase>(() => (initialPage ? 'ready' : 'loading'));
+  /*
+   * The cache is NOT read while rendering. `localStorage` does not exist on the server,
+   * so seeding state from it made the server render "Loading the feed…" while the client
+   * rendered the cached posts, and React threw the whole tree away with a hydration
+   * error. It is applied in the fetch effect below instead, which costs one frame of the
+   * skeleton and is the honest price of server rendering.
+   */
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase>('loading');
   const [error, setError] = useState<string | null>(null);
   const [paging, setPaging] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -114,24 +120,31 @@ export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
   const viewed = useRef(new Set<string>());
   const inFlight = useRef(false);
 
-  useEffect(() => {
-    if (trackedFilter === filterKey) return;
-    const cached = readCachedFeed(cacheKeyFor(filterKey));
+  /*
+   * A different slice means everything on screen belongs to the previous one, so it is
+   * cleared. Adjusted DURING RENDER, which is React's documented pattern for state that
+   * derives from a changed prop.
+   *
+   * main resolved this into an effect that calls the setters in its body. That trips the
+   * repo's own `react-hooks/set-state-in-effect` rule — `npm run lint` fails on main's
+   * copy of this file today — and it also cannot read the cache the way it wants to
+   * without reintroducing the hydration mismatch, since `localStorage` does not exist on
+   * the server. Cache repainting therefore stays in the fetch effect below, in a
+   * callback, where it is allowed to happen.
+   */
+  if (trackedFilter !== filterKey) {
     setTrackedFilter(filterKey);
-    setPosts(cached?.items ?? []);
-    setCursor(cached?.nextCursor ?? null);
+    setPosts([]);
+    setCursor(null);
     setActiveIndex(0);
     setError(null);
-    setPhase(cached ? 'ready' : 'loading');
-  }, [cacheKey, filterKey, trackedFilter]);
+    setPhase('loading');
+  }
 
   // First page. State only ever changes in the promise callbacks — updating it
   // synchronously in an effect body cascades an extra render.
   useEffect(() => {
     let live = true;
-    // Quiet only when this slice already has something on screen. A first visit to a
-    // channel must be able to show its loading and error states.
-    const hadCache = readCachedFeed(cacheKey) !== null;
 
     async function refresh(quiet: boolean) {
       if (inFlight.current) return;
@@ -153,7 +166,26 @@ export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
       }
     }
 
-    void refresh(hadCache);
+    /*
+     * Paint this slice's cache, then refresh behind it. In a callback, not in the effect
+     * body: reading it during render broke hydration (no `localStorage` on the server),
+     * and setting state straight from the body cascades a render — which is also what
+     * `react-hooks/set-state-in-effect` is there to stop.
+     *
+     * Quiet only when there was something to paint. A first visit to a channel has to be
+     * able to show its loading and error states.
+     */
+    void Promise.resolve().then(() => {
+      if (!live) return;
+      const cached = readCachedFeed(cacheKey);
+      if (cached) {
+        setPosts(cached.items);
+        setCursor(cached.nextCursor);
+        setPhase('ready');
+      }
+      void refresh(cached !== null);
+    });
+
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') void refresh(true);
     }, FEED_REFRESH_MS);
