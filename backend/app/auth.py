@@ -3,7 +3,8 @@
 Two paths, both explicit:
 
     Authorization: Bearer <google_id_token>   verified, domain-restricted
-    no header + DEV_AUTH_EMAIL set            treated as that user, local only
+    no header + DEV_AUTH_EMAIL set            local-only dev user
+    X-Dev-Email + DEV_AUTH_EMAIL set          local-only second-user testing
 
 The domain check is the actual access control here — an internal learning feed
 must not accept an arbitrary Google account, so a token that verifies but carries
@@ -49,6 +50,7 @@ def _verify_google_token(token: str) -> dict[str, str]:
 
 def current_user(
     authorization: str | None = Header(default=None),
+    x_dev_email: str | None = Header(default=None),
     session: Session = Depends(get_session),
 ) -> User:
     """Resolve the caller, creating the user row on first sight."""
@@ -58,7 +60,7 @@ def current_user(
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "expected 'Bearer <token>'")
         profile = _verify_google_token(token)
     elif settings.dev_auth_enabled:
-        email = settings.dev_auth_email
+        email = x_dev_email or settings.dev_auth_email
         profile = {"email": email, "name": email.partition("@")[0], "picture": ""}
     else:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing Authorization header")
