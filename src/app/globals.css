@@ -136,12 +136,24 @@ body {
 }
 
 /*
- * 9:16 safe areas. Critical content stays out of the top 8% (progress bar,
- * status bar) and bottom 12% (caption bar, nav).
+ * 9:16 safe areas, sized to the chrome that actually exists rather than to a
+ * percentage.
+ *
+ * Percentages were the bug: 12% of an 844px viewport is 101px, but the bottom
+ * chrome (metadata + caption bar + app nav) is over 200px, so scene content was
+ * drawn underneath it — a diagram and the post title rendered on top of each other.
+ * These reserves are measured against the real stack:
+ *   top    progress rail + control row
+ *   bottom metadata, caption bar, app nav
  */
 @utility scene-safe {
-  padding-top: 8%;
-  padding-bottom: 12%;
+  padding-top: 5.5rem;
+  /*
+   * Measured, not guessed. On a 390x844 viewport the feed's bottom chrome starts at
+   * y=570: metadata block, caption bar, then the app nav. 844-570 = 274px, so the
+   * reserve is 17.5rem with a little slack for a three-line title.
+   */
+  padding-bottom: var(--rw-scene-bottom, 17.5rem);
   padding-inline: 1.25rem;
 }
 
@@ -166,28 +178,6 @@ body {
 
 .input::placeholder {
   color: var(--color-neutral-500);
-}
-
-/*
- * Used by the original prototype components (ReelPlayer, StoryboardPreview) that the
- * feed replaces. Kept so nothing silently loses its styling mid-migration; delete
- * together with those components.
- */
-.player-button {
-  border-radius: 0.75rem;
-  background: var(--color-neutral-800);
-  padding: 0.7rem 0.6rem;
-  color: var(--color-neutral-200);
-  font-size: 0.78rem;
-  font-weight: 700;
-  transition:
-    transform 160ms ease,
-    background 160ms ease;
-}
-
-.player-button:hover {
-  transform: translateY(-1px);
-  background: var(--color-neutral-700);
 }
 
 /* Visible keyboard focus everywhere. Non-negotiable, not a nice-to-have. */

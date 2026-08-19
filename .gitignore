@@ -57,3 +57,6 @@ backend/.storage/
 backend/__pycache__/
 **/__pycache__/
 .pytest_cache/
+
+# stray tool artifacts
+tmp/
