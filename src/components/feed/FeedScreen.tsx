@@ -16,17 +16,56 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Icon } from '@/components/ui';
-import { api, type FeedFilter, type Post } from '@/lib/api';
+import { api, type FeedFilter, type FeedPage, type Post } from '@/lib/api';
 import { FeedPost } from './FeedPost';
 import { MuteProvider } from './chrome';
 
 /** Fetch the next page while the reader still has this much feed left below them. */
 const PREFETCH_MARGIN = '900px';
+const FEED_CACHE_KEY = 'razorwire.feed.v1';
+const FEED_REFRESH_MS = 15_000;
 
 type Phase = 'loading' | 'ready' | 'error';
 
 function messageFor(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'Could not reach the feed.';
+}
+
+/**
+ * One cache entry per slice, not one for the feed.
+ *
+ * The cache is keyed on the filter because "For you", "Following" and a single
+ * channel are different lists behind the same component. A single key would paint
+ * the previous slice's posts under the new slice's heading, which reads as a bug in
+ * follow rather than as a stale cache.
+ */
+function cacheKeyFor(filterKey: string): string {
+  return `${FEED_CACHE_KEY}:${filterKey}`;
+}
+
+function readCachedFeed(key: string): FeedPage | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const cached = localStorage.getItem(key);
+    if (!cached) return null;
+    const page = JSON.parse(cached) as FeedPage;
+    return Array.isArray(page.items) ? page : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedFeed(key: string, page: FeedPage) {
+  try {
+    localStorage.setItem(key, JSON.stringify(page));
+  } catch {
+    // Cache is an optimization. Private mode/quota failures should not break feed.
+  }
+}
+
+function mergeFirstPage(current: Post[], fresh: Post[]): Post[] {
+  const ids = new Set(fresh.map((post) => post.id));
+  return [...fresh, ...current.filter((post) => !ids.has(post.id))];
 }
 
 function isTyping(target: EventTarget | null): boolean {
@@ -52,9 +91,16 @@ interface FeedScreenProps {
 }
 
 export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [phase, setPhase] = useState<Phase>('loading');
+  // Callers pass an object literal, so its identity changes every render. Key the
+  // fetches on the values instead, or the feed refetches forever.
+  const filterKey = JSON.stringify(filter ?? {});
+  const activeFilter = useMemo(() => JSON.parse(filterKey) as FeedFilter, [filterKey]);
+  const cacheKey = cacheKeyFor(filterKey);
+
+  const [initialPage] = useState<FeedPage | null>(() => readCachedFeed(cacheKeyFor(filterKey)));
+  const [posts, setPosts] = useState<Post[]>(() => initialPage?.items ?? []);
+  const [cursor, setCursor] = useState<string | null>(() => initialPage?.nextCursor ?? null);
+  const [phase, setPhase] = useState<Phase>(() => (initialPage ? 'ready' : 'loading'));
   const [error, setError] = useState<string | null>(null);
   const [paging, setPaging] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -65,53 +111,70 @@ export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
   const viewed = useRef(new Set<string>());
   const inFlight = useRef(false);
 
-  // Callers pass an object literal, so its identity changes every render. Key the
-  // fetches on the values instead, or the feed refetches forever.
-  const filterKey = JSON.stringify(filter ?? {});
-  const activeFilter = useMemo(() => JSON.parse(filterKey) as FeedFilter, [filterKey]);
-
   // A different slice means everything on screen belongs to the previous one. Reset
   // during render rather than in an effect, which would paint the stale posts once.
+  // Seeded from that slice's own cache, so switching tabs is instant the second time.
   const [trackedFilter, setTrackedFilter] = useState(filterKey);
   if (trackedFilter !== filterKey) {
+    const cached = readCachedFeed(cacheKey);
     setTrackedFilter(filterKey);
-    setPosts([]);
-    setCursor(null);
+    setPosts(cached?.items ?? []);
+    setCursor(cached?.nextCursor ?? null);
     setActiveIndex(0);
     setError(null);
-    setPhase('loading');
+    setPhase(cached ? 'ready' : 'loading');
   }
 
   // First page. State only ever changes in the promise callbacks — updating it
   // synchronously in an effect body cascades an extra render.
   useEffect(() => {
     let live = true;
-    inFlight.current = true;
+    // Quiet only when this slice already has something on screen. A first visit to a
+    // channel must be able to show its loading and error states.
+    const hadCache = readCachedFeed(cacheKey) !== null;
 
-    api
-      .feed(null, activeFilter)
-      .then((page) => {
+    async function refresh(quiet: boolean) {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      try {
+        const page = await api.feed(null, activeFilter);
         if (!live) return;
-        setPosts(page.items);
+        setPosts((current) => (quiet ? mergeFirstPage(current, page.items) : page.items));
         setCursor(page.nextCursor);
+        writeCachedFeed(cacheKey, page);
         setError(null);
         setPhase('ready');
-      })
-      .catch((cause: unknown) => {
+      } catch (cause: unknown) {
         if (!live) return;
         setError(messageFor(cause));
-        setPhase('error');
-      })
-      .finally(() => {
+        if (!quiet) setPhase('error');
+      } finally {
         inFlight.current = false;
-      });
+      }
+    }
+
+    void refresh(hadCache);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh(true);
+    }, FEED_REFRESH_MS);
 
     return () => {
       live = false;
+      window.clearInterval(interval);
     };
-  }, [reloadToken, activeFilter]);
+  }, [reloadToken, activeFilter, cacheKey]);
 
-  /** Subsequent pages. Only ever called from an observer or a click. */
+  /**
+   * Subsequent pages. Only ever called from an observer or a click.
+   *
+   * The setters are in the dep list on purpose. It has to be memoized, because the
+   * paging effect below takes it as a dependency and would re-subscribe its observer
+   * on every render otherwise. But once this closed over `activeFilter`, the React
+   * Compiler refused to preserve a `[activeFilter]` memoization — the deps it infers
+   * include the setters — and skipped optimizing the whole component. `useState`
+   * setters are stable for the life of the component, so naming them changes nothing
+   * at runtime and satisfies both rules.
+   */
   const loadMore = useCallback(
     async (from: string) => {
       if (inFlight.current) return;
@@ -134,7 +197,7 @@ export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
         setPaging(false);
       }
     },
-    [activeFilter],
+    [activeFilter, setPaging, setPosts, setCursor, setError],
   );
 
   // Which post is active. 60% visible is past the point where snap has committed.
