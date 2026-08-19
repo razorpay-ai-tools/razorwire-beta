@@ -33,6 +33,7 @@ from pydantic.alias_generators import to_camel
 from sqlalchemy import func
 from sqlmodel import Session, col, delete, select
 
+from .aidocs import AidocsUnavailable, fetch_doc
 from .auth import current_user
 from .config import settings
 from .models import Comment, Job, Like, Post, Save, User, get_session, init_db, utcnow
@@ -138,8 +139,9 @@ class CommentCreate(_Out):
 
 class GenerateRequest(_Out):
     kind: Literal["aidoc", "topic"] = "topic"
-    #: raw document text, or the topic
-    input: str = Field(min_length=10)
+    #: The topic, or pasted document text. Optional for kind="aidoc", where the
+    #: backend fetches the document itself and only falls back to this if that fails.
+    input: str = ""
     doc_id: str | None = None
     doc_title: str | None = None
     doc_url: str | None = None
@@ -410,16 +412,33 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
         if job is None:
             return
         try:
+            text, doc_title, doc_url = body.input, body.doc_title, body.doc_url
+
+            if body.kind == "aidoc" and body.doc_id:
+                try:
+                    doc = fetch_doc(body.doc_id)
+                    text = doc.to_prompt_text()
+                    doc_title = doc_title or doc.title
+                    doc_url = doc_url or doc.url
+                except AidocsUnavailable as exc:
+                    # pasted text is the fallback; only fail outright if there is none
+                    log.warning("aidocs fetch failed for %s: %s", body.doc_id, exc)
+                    if not body.input.strip():
+                        raise RuntimeError(f"could not read {body.doc_id}: {exc}") from exc
+
+            if not text.strip():
+                raise RuntimeError("nothing to generate from")
+
             job.state, job.progress, job.updated_at = "scripting", 20, utcnow()
             session.add(job)
             session.commit()
 
             storyboard = run_script_stage(
                 kind=body.kind,
-                text=body.input,
+                text=text,
                 doc_id=body.doc_id,
-                doc_title=body.doc_title,
-                doc_url=body.doc_url,
+                doc_title=doc_title,
+                doc_url=doc_url,
             )
 
             job.storyboard = storyboard_to_json(storyboard)
@@ -450,6 +469,8 @@ def generate(
     """
     if body.kind == "aidoc" and not body.doc_id:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "aidoc generation needs a docId")
+    if body.kind == "topic" and len(body.input.strip()) < 10:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "topic generation needs input")
 
     job = Job(requester_id=user.id, source_kind=body.kind, source_input=body.input[:2000])
     session.add(job)

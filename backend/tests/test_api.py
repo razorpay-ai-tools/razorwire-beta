@@ -219,3 +219,111 @@ def test_upload_rejects_a_non_video(client):
 def test_aidoc_generation_requires_a_doc_id(client):
     r = client.post("/generate", json={"kind": "aidoc", "input": "a" * 50})
     assert r.status_code == 422
+
+
+# ------------------------------------------------------------------ aidocs ingest
+
+from app.aidocs import AidocsUnavailable, fetch_doc, parse_doc_html  # noqa: E402
+
+_DOC_HTML = """
+<html><head><title>OTM Rearch Spec</title>
+<style>.field { color: #fff } h2 { font-size: 20px }</style>
+<script>var x = "not prose";</script></head>
+<body>
+  <h1>OTM / SBMD Rearch</h1>
+  <p>One-time mandates move off the monolith.</p>
+  <h2>Section 2 - Problem Statement</h2>
+  <p>Rules live in two places.</p>
+  <ul><li>Duplicated expiry validation</li><li>No owner for block_fund</li></ul>
+  <h2>Section 4 - Proposed Architecture</h2>
+  <p>pg-router routes into payments-mandate.</p>
+</body></html>
+"""
+
+
+def test_parses_sections_and_title():
+    doc = parse_doc_html("doc_abc123", _DOC_HTML)
+    assert doc.title == "OTM Rearch Spec"
+    headings = [s.heading for s in doc.sections]
+    assert "Section 2 - Problem Statement" in headings
+    assert "Section 4 - Proposed Architecture" in headings
+
+
+def test_drops_style_and_script_content():
+    """CSS and JS reaching the model would waste tokens and invent nonsense citations."""
+    text = parse_doc_html("doc_abc123", _DOC_HTML).to_prompt_text()
+    assert "font-size" not in text
+    assert "not prose" not in text
+    assert "block_fund" in text  # real prose survives
+
+
+def test_prompt_text_keeps_headings_so_claude_can_cite():
+    text = parse_doc_html("doc_abc123", _DOC_HTML).to_prompt_text()
+    assert "## Section 4 - Proposed Architecture" in text
+    assert text.index("Section 2") < text.index("Section 4")  # document order
+
+
+def test_html_without_headings_still_yields_content():
+    doc = parse_doc_html("doc_x1", "<html><body><p>Just a paragraph.</p></body></html>")
+    assert doc.sections
+    assert "Just a paragraph." in doc.to_prompt_text()
+
+
+def test_rejects_a_malformed_doc_id_before_shelling_out():
+    for bad in ("doc_../../etc/passwd", "notadoc", "doc_with-dashes", "doc_"):
+        with pytest.raises(AidocsUnavailable):
+            fetch_doc(bad)
+
+
+def test_doc_url_is_derived_from_the_id():
+    assert parse_doc_html("doc_r523noskel555f7f", _DOC_HTML).url.endswith("/doc_r523noskel555f7f")
+
+
+def test_topic_generation_still_requires_input(client):
+    assert client.post("/generate", json={"kind": "topic", "input": "hi"}).status_code == 422
+
+
+def test_aidoc_generation_no_longer_requires_pasted_input(client):
+    """The backend fetches the document, so `input` is optional for the aidoc path."""
+    r = client.post("/generate", json={"kind": "aidoc", "docId": "doc_sample123"})
+    assert r.status_code == 202, r.text
+
+
+def test_heading_does_not_absorb_a_nested_caption():
+    """`div.field-title > span` is how real aidocs mark sections; naive concatenation
+    turns "Problem" into "ProblemPain, users, cost" and citations stop matching."""
+    html = '<div class="field-title">Problem<span>Pain and users</span></div><p>Body text here.</p>'
+    doc = parse_doc_html("doc_x", html)
+    headings = [s.heading for s in doc.sections]
+    assert "Problem" in headings, headings
+
+
+def test_heading_with_no_prose_is_not_offered_as_a_section():
+    """A table header cell is not a citable section, and offering it invites a false cite."""
+    html = "<table><tr><th>Dimension</th><th>Detail</th></tr>" "<tr><td>Real prose lives here.</td></tr></table>"
+    doc = parse_doc_html("doc_x", html)
+    assert all(s.text for s in doc.sections)
+    assert "Dimension" not in [s.heading for s in doc.sections]
+
+
+def test_non_h_headings_are_detected():
+    """Relying on <h*> alone collapsed a 10-section document into one blob."""
+    html = (
+        '<div class="field-title">Alpha</div><p>First body.</p>'
+        '<div class="field-title">Beta</div><p>Second body.</p>'
+    )
+    doc = parse_doc_html("doc_x", html)
+    assert [s.heading for s in doc.sections] == ["Alpha", "Beta"]
+    assert doc.is_structured
+
+
+def test_unstructured_document_is_flagged():
+    doc = parse_doc_html("doc_x", f"<html><body><p>{'word ' * 3000}</p></body></html>")
+    assert not doc.is_structured
+
+
+def test_prompt_text_is_not_truncated():
+    """A per-section cap silently discarded two thirds of a real document."""
+    body = "sentence. " * 900
+    doc = parse_doc_html("doc_x", f"<h2>Big Section</h2><p>{body}</p>")
+    assert len(doc.to_prompt_text()) > 8000
