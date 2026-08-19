@@ -9,6 +9,7 @@ dependencies = [
     "sqlmodel>=0.0.22",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.6",
+    "eval_type_backport>=0.4",
     "python-multipart>=0.0.17",
     "google-auth>=2.36",
     "anthropic>=0.40",

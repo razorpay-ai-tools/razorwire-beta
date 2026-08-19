@@ -37,4 +37,14 @@ backend_pid=$!
 npm run dev &
 frontend_pid=$!
 
-wait "$backend_pid" "$frontend_pid"
+while true; do
+  if ! kill -0 "$backend_pid" 2>/dev/null; then
+    wait "$backend_pid"
+    exit $?
+  fi
+  if ! kill -0 "$frontend_pid" 2>/dev/null; then
+    wait "$frontend_pid"
+    exit $?
+  fi
+  sleep 1
+done

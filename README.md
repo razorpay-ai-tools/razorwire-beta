@@ -36,6 +36,10 @@ It creates missing local env files, installs missing dependencies, then starts:
 - backend API: `http://localhost:8000`
 - API docs: `http://localhost:8000/docs`
 
+Requires `node`, `npm`, and `python3`. Python 3.12 is preferred; the local
+launcher also works with macOS Python 3.9 by installing the annotation backport
+listed in `backend/requirements.txt`.
+
 Config files:
 
 - copy `backend/.env.example` to `backend/.env`
