@@ -19,6 +19,23 @@ Nothing leaves the perimeter and there is no per-render cost.
 
 from __future__ import annotations
 
-from .pipeline import RenderResult, RenderUnavailable, render_video, voice_storyboard
+from .pipeline import (
+    RenderResult,
+    RenderUnavailable,
+    render_from_voiced,
+    render_video,
+    voice_storyboard,
+)
 
-__all__ = ["RenderResult", "RenderUnavailable", "render_video", "voice_storyboard"]
+# `render_from_voiced` belongs here because `main._run_job` imports it from this package
+# to run voicing and rendering as separate job states. It was in `pipeline.__all__` but
+# never re-exported, so every generation that got past the model died on
+# `cannot import name 'render_from_voiced'` — after the paid call, which is the worst
+# place to fail.
+__all__ = [
+    "RenderResult",
+    "RenderUnavailable",
+    "render_from_voiced",
+    "render_video",
+    "voice_storyboard",
+]

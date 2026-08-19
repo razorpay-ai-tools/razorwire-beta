@@ -166,12 +166,31 @@ def run_script_stage(
         )
 
         block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
-        if block is None:
-            last_errors = ["model produced no tool call"]
-            messages.append({"role": "user", "content": f"Call the {_TOOL_NAME} tool."})
-            continue
 
-        candidate = dict(block.input)
+        if block is None:
+            # Forced tool choice is a request, not a guarantee, once the call goes through
+            # the gateway to a non-Anthropic model: glm-5p2 answers with the storyboard as
+            # JSON in a text block maybe half the time, which failed all three attempts and
+            # burned three paid calls to produce nothing. The JSON is right there, so take
+            # it — the validator is the gate either way, and a storyboard that passes is
+            # worth the same whichever envelope carried it.
+            candidate = _json_from_text(response)
+            if candidate is None:
+                last_errors = ["model produced no tool call and no JSON to fall back to"]
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Call the {_TOOL_NAME} tool. If you cannot call tools, reply with "
+                            "the storyboard as a single JSON object and nothing else."
+                        ),
+                    }
+                )
+                log.warning("attempt %d/%d: no tool call, no parsable JSON", attempt, MAX_ATTEMPTS)
+                continue
+            log.info("attempt %d: recovered the storyboard from a text reply", attempt)
+        else:
+            candidate = dict(block.input)
         # the pipeline owns these; the source fields are ours to set, not the model's
         candidate["source"] = {
             "kind": kind,
@@ -185,25 +204,94 @@ def run_script_stage(
         except StoryboardInvalid as invalid:
             last_errors = invalid.errors
             log.warning("storyboard invalid on attempt %d/%d: %s", attempt, MAX_ATTEMPTS, invalid.errors)
-            messages.append({"role": "assistant", "content": [block.model_dump()]})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "is_error": True,
-                            "content": (
-                                "The storyboard was rejected. Fix every problem and call the tool "
-                                "again:\n" + "\n".join(f"- {e}" for e in last_errors)
-                            ),
-                        }
-                    ],
-                }
+            complaint = "The storyboard was rejected. Fix every problem and try again:\n" + "\n".join(
+                f"- {e}" for e in last_errors
             )
 
+            if block is None:
+                # A text-shaped answer has no tool_use_id to attach a tool_result to, and
+                # sending one anyway is a 400 from the gateway. Plain turns instead.
+                messages.append({"role": "assistant", "content": json.dumps(candidate)})
+                messages.append({"role": "user", "content": complaint})
+            else:
+                messages.append({"role": "assistant", "content": [block.model_dump()]})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "is_error": True,
+                                "content": complaint,
+                            }
+                        ],
+                    }
+                )
+
     raise StoryboardInvalid(last_errors)
+
+
+def _json_from_text(response) -> dict | None:
+    """Pull a storyboard object out of a text reply, or return None.
+
+    Models that cannot or will not call the tool answer with the JSON directly, sometimes
+    fenced in ```json, sometimes with a sentence in front of it. Scanning for the outermost
+    balanced braces handles all three without a regex that a nested object would defeat.
+    """
+    text = "".join(
+        getattr(block, "text", "") for block in response.content if getattr(block, "type", None) == "text"
+    ).strip()
+    if not text:
+        return None
+
+    # Every `{` is a candidate, not just the first. A reply that opens with "Here is the
+    # storyboard {as requested}:" balances a brace before the real object begins, and
+    # stopping at the first candidate threw the whole storyboard away.
+    #
+    # ponytail: O(n^2) worst case on brace-heavy prose. The text is a few KB and this runs
+    # once per attempt; revisit if a source ever produces megabytes of it.
+    fallback: dict | None = None
+    for start, char in enumerate(text):
+        if char != "{":
+            continue
+        candidate = _balanced_object(text, start)
+        if candidate is None:
+            continue
+        # A storyboard has these; a brace in prose does not. Keep looking rather than
+        # returning the first thing that happens to parse.
+        if "scenes" in candidate or "meta" in candidate:
+            return candidate
+        fallback = fallback or candidate
+    return fallback
+
+
+def _balanced_object(text: str, start: int) -> dict | None:
+    """Parse the object starting at ``start``, or None if it does not close or parse."""
+    depth, in_string, escaped = 0, False, False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    parsed = json.loads(text[start : index + 1])
+                except json.JSONDecodeError:
+                    return None
+                return parsed if isinstance(parsed, dict) else None
+    return None
 
 
 def resolve_broll(sb: Storyboard, library: dict[str, str]) -> Storyboard:

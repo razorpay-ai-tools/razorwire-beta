@@ -156,3 +156,27 @@ def test_fixture_renders_to_a_real_mp4(tmp_path):
     assert result.mp4_path.stat().st_size > 10_000
     assert result.duration_ms > 0
     assert len(result.scene_durations) == len(sb.scenes)
+
+
+def test_the_package_exports_everything_main_imports():
+    """`__all__` promising a name is not the same as exporting it.
+
+    `render_from_voiced` was listed in `pipeline.__all__` but missing from the package's
+    own re-export, so `main._run_job` raised `cannot import name` on every generation —
+    after the paid model call, and reported to the user as a failed pipeline rather than a
+    missing import. Reads the import out of main.py rather than hardcoding a list, so a
+    name added there and forgotten here fails immediately.
+    """
+    import re
+
+    import app.render as render
+
+    source = (Path(__file__).parent.parent / "app" / "main.py").read_text()
+    imported = set()
+    for match in re.finditer(r"from \.render import ([^\n]+)", source):
+        imported.update(name.strip() for name in match.group(1).split(","))
+
+    assert imported, "expected main.py to import from .render"
+    missing = sorted(name for name in imported if not hasattr(render, name))
+    assert not missing, f"app.render does not export {missing}, which main.py imports"
+    assert set(render.__all__) >= imported

@@ -536,3 +536,65 @@ def test_upload_returns_an_absolute_url(client):
     r = client.post("/uploads", files={"file": ("clip.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4")})
     assert r.status_code == 201, r.text
     assert r.json()["mediaUrl"].startswith("http://")
+
+
+# ------------------------------------------------------- the no-tool-call fallback
+
+from types import SimpleNamespace  # noqa: E402
+
+from app.pipeline import _json_from_text  # noqa: E402
+
+
+def _text_reply(text: str):
+    return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+
+
+def test_storyboard_is_recovered_from_a_text_reply():
+    """Forced tool choice is advisory once a non-Anthropic model is behind the gateway.
+
+    glm-5p2 answers with the storyboard as JSON in a text block a good fraction of the
+    time, which failed all three attempts and burned three paid calls for nothing. Each
+    case below is a shape a model actually produced.
+    """
+    # Prose that balances a brace before the real object begins.
+    recovered = _json_from_text(
+        _text_reply('Here is the storyboard {as requested}: {"meta":{"title":"t"},"scenes":[1]}')
+    )
+    assert recovered == {"meta": {"title": "t"}, "scenes": [1]}
+
+    # Fenced, with a brace inside a string inside the object.
+    assert _json_from_text(_text_reply('```json\n{"meta":{},"scenes":[{"x":"}"}]}\n```')) == {
+        "meta": {},
+        "scenes": [{"x": "}"}],
+    }
+
+    # Mermaid puts braces in strings; a regex would cut the object short here.
+    assert _json_from_text(_text_reply('{"scenes":[],"mermaid":"graph TD\\n A[x{y}] --> B"}'))["mermaid"]
+
+    # And nothing is invented when there is nothing to find.
+    assert _json_from_text(_text_reply("I cannot do that.")) is None
+    assert _json_from_text(_text_reply('{"meta":{"title"')) is None
+    assert _json_from_text(_text_reply("")) is None
+
+
+def test_text_only_reply_still_produces_a_storyboard(monkeypatch):
+    """End to end through `run_script_stage`: no tool call, valid JSON, real storyboard."""
+    payload = json.loads(FIXTURE.read_text())
+    payload.pop("source", None)  # the pipeline owns this
+
+    class _FakeMessages:
+        def create(self, **kwargs):
+            return _text_reply("Sure, here it is:\n" + json.dumps(payload))
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            self.messages = _FakeMessages()
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+    monkeypatch.setattr(settings, "litellm_api_key", "sk-test")
+
+    sb = run_script_stage(kind="aidoc", text="anything", doc_id="doc_abc123")
+    assert sb.scenes, "a text-shaped reply must still yield scenes"
+    assert sb.source.doc_id == "doc_abc123", "the pipeline sets source, not the model"
