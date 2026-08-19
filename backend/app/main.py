@@ -675,6 +675,38 @@ def upload_media(user: UserDep, file: UploadFile = File(...)) -> UploadOut:
 # --------------------------------------------------------------------------- pipeline
 
 
+def _render_and_publish(session: Session, job: Job, storyboard) -> None:
+    """Voice, render and publish. Advances voicing -> rendering -> published.
+
+    Falls back to a storyboard-only post (the browser reel) when the render tooling
+    is unavailable, so a box without ffmpeg/Chromium still produces a playable post.
+    Rendering is imported lazily so a missing optional dependency never blocks boot.
+    """
+    from .render import RenderUnavailable, render_from_voiced, voice_storyboard
+    from .render.publish import publish_render, publish_storyboard_only
+
+    work_dir = Path(settings.work_dir) / job.id
+    try:
+        job.state, job.progress, job.updated_at = "voicing", 45, utcnow()
+        session.add(job)
+        session.commit()
+        voiced = voice_storyboard(storyboard, work_dir)
+
+        job.state, job.progress, job.updated_at = "rendering", 80, utcnow()
+        session.add(job)
+        session.commit()
+        result = render_from_voiced(storyboard, voiced, work_dir)
+
+        publish_render(session, job, storyboard, result)
+    except RenderUnavailable as exc:
+        log.warning("render tooling unavailable (%s); publishing storyboard-only", exc)
+        publish_storyboard_only(session, job, storyboard)
+
+    # The storyboard now carries measured durations; keep the job's copy in step.
+    job.storyboard = storyboard_to_json(storyboard)
+    job.state, job.progress = "published", 100
+
+
 def _run_job(job_id: str, body: GenerateRequest) -> None:
     """Background worker. Owns its own session; the request's is already closed."""
     from .models import _engine
@@ -749,7 +781,7 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
                 # turn that into a mystery during rendering.
                 log.error("job %s cannot be rendered to MP4: %s", job_id, invalid.errors)
 
-            job.state, job.progress = "published", 100
+            _render_and_publish(session, job, storyboard)
         except StoryboardInvalid as invalid:
             job.state, job.error = "failed", "; ".join(invalid.errors)
             log.warning("job %s failed validation: %s", job_id, invalid.errors)

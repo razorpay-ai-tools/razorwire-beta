@@ -72,6 +72,101 @@ export function Broll({
 }
 
 export function GeneratedPost({ post, active }: { post: Post; active: boolean }) {
+  // Once the render pipeline has produced an MP4, play that; the storyboard is kept
+  // on the post for the Spec view. Without an MP4 (tooling absent, or still on the
+  // browser-reel path) fall back to the live scene player. Two components, so the
+  // hooks in each stay stable regardless of which path a post takes.
+  if (post.mediaUrl) return <GeneratedVideo post={post} active={active} />;
+  return <GeneratedReel post={post} active={active} />;
+}
+
+/** A generated explainer that has been rendered to an MP4. Plays the file, keeps the
+ *  "AI reel" badge and the Spec citation action that a plain clip does not have. */
+function GeneratedVideo({ post, active }: { post: Post; active: boolean }) {
+  const { muted } = useMute();
+  const ref = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [broken, setBroken] = useState(false);
+  const src = post.mediaUrl;
+  const usable = Boolean(src) && !broken;
+
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    if (active) {
+      void video.play().catch(() => {
+        // Autoplay refused (usually unmuted). The centre play overlay is the recovery.
+      });
+    } else {
+      video.pause();
+      video.currentTime = 0;
+    }
+  }, [active]);
+
+  function toggle() {
+    const video = ref.current;
+    if (!video) return;
+    if (video.paused) void video.play().catch(() => {});
+    else video.pause();
+  }
+
+  return (
+    <article
+      aria-label={`Generated reel: ${post.title}`}
+      className="relative size-full overflow-hidden bg-neutral-950"
+    >
+      {usable && src ? (
+        <video
+          ref={ref}
+          src={src}
+          muted={muted}
+          loop
+          playsInline
+          preload="metadata"
+          tabIndex={-1}
+          onError={() => setBroken(true)}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          className="absolute inset-0 size-full object-cover"
+        />
+      ) : (
+        <div aria-hidden className="absolute inset-0" style={accentBackdrop(post.accent)} />
+      )}
+
+      <button
+        type="button"
+        tabIndex={active ? 0 : -1}
+        onClick={toggle}
+        aria-label={playing ? 'Pause reel' : 'Play reel'}
+        className="absolute inset-0 z-20 grid place-items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400"
+      >
+        {!playing ? (
+          <span className="grid size-16 place-items-center rounded-full border border-white/20 bg-neutral-950/70 text-white backdrop-blur-md">
+            <Icon name="play" label={null} filled className="size-7 translate-x-0.5" />
+          </span>
+        ) : null}
+      </button>
+
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-4 pt-4">
+        <span className="panel flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-300">
+          <Icon name="sparkle" label={null} className="size-3.5 shrink-0 text-brand-300" />
+          AI reel
+        </span>
+        <MuteButton className="ml-auto" />
+      </div>
+
+      <div className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">
+        <div className="pl-4 pr-20">
+          <PostMeta post={post} />
+        </div>
+      </div>
+
+      <ActionRail post={post} specHref={docHref(post.storyboard)} />
+    </article>
+  );
+}
+
+function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
   const scenes = useMemo(() => post.storyboard?.scenes ?? [], [post.storyboard]);
   const { index, count, scene, caption, playing, setPlaying, next, prev } = useReel(scenes, active);
   const { muted } = useMute();

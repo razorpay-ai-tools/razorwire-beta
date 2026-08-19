@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The Python backend and its virtualenv are not JS/TS source. The render
+    // pipeline installs Playwright into backend/.venv, whose bundled Node driver
+    // would otherwise flood `npm run lint` with thousands of vendored-file issues.
+    "backend/**",
   ]),
 ]);
 
