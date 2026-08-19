@@ -131,23 +131,20 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
       /*
        * pb-20 clears the app's create bar, which is pinned to the bottom centre.
        *
-       * `--rw-panel-w` is declared here because both the panel and the centring spacer
-       * below need the same number.
+       * `--rw-panel-w` sets the panel's width; the stage takes the rest.
+       */
+      /*
+       * The CARD is centred, not the stage.
+       *
+       * There used to be a spacer mirroring the panel's width on the far side of the
+       * stage, which put the 9:16 player exactly on the viewport midpoint. Measured, it
+       * also pushed the card 200px right of centre and left a visible dead band down
+       * the left edge — the composition read as shifted even though the player was
+       * technically centred. Balancing the whole card is what actually looks centred;
+       * the stage now sits a half-panel left of the midpoint, which nobody perceives.
        */
       className="flex h-full w-full items-center justify-center px-6 pb-20 pt-6 [--rw-panel-w:21rem] xl:[--rw-panel-w:25rem] 2xl:[--rw-panel-w:28rem]"
     >
-      {/*
-       * The optical-centring spacer. The player is the focal element, so it sits on the
-       * VIEWPORT's centre line, not the card's — without this, a card of stage+panel
-       * centred as a whole pushes the 9:16 player a half-panel to the left of centre.
-       * Mirroring the panel's width on the other side of the stage puts the stage's
-       * midpoint exactly on the viewport midpoint, for any panel width.
-       *
-       * It is also the responsive release valve: it is the only shrinkable item in this
-       * row, so when stage + 2 panels no longer fit (a 1024px window), it collapses and
-       * the card slides back toward the left instead of overflowing.
-       */}
-      <div aria-hidden className="h-0 w-[var(--rw-panel-w)] min-w-0 shrink" />
 
       {/*
        * `max-h-[75vw]` is the responsive decision on the other axis. The stage is a true

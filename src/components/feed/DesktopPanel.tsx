@@ -306,7 +306,12 @@ export function DesktopPanel({ post, active, currentIndex }: DesktopPanelProps) 
       {storyboard ? (
         <div
           data-testid="panel-audit"
-          className="min-h-0 flex-1 overflow-hidden [&>section]:border-l-0"
+          /*
+           * The mask fades the last few pixels of the scroll region. Without it the
+           * trail clipped a narration line mid-word directly against the conversation
+           * header, which reads as broken text instead of "there is more above".
+           */
+          className="min-h-0 flex-1 overflow-hidden [mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)] [&>section]:border-l-0"
         >
           <StoryboardInspector storyboard={storyboard} currentIndex={currentIndex} />
         </div>
