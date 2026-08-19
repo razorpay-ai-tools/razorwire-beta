@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "title": "UPI One-Time Mandates, rearchitected",
+    "tags": ["upi", "mandates", "architecture"]
+  },
+  "source": {
+    "kind": "aidoc",
+    "docId": "doc_sample_otm_rearch",
+    "title": "OTM / SBMD Rearch — Current and Proposed Architecture"
+  },
+  "scenes": [
+    {
+      "type": "title",
+      "heading": "One-Time Mandates",
+      "sub": "Off the monolith, onto payments-mandate",
+      "narration": "One-time mandates and single-block-multiple-debit are moving off the Laravel monolith. Here is what changes, in sixty seconds.",
+      "broll": { "mood": "money" }
+    },
+    {
+      "type": "bullets",
+      "heading": "The problem",
+      "bullets": [
+        "Mandate logic split across two gateways",
+        "Expiry rules duplicated per merchant category",
+        "No single owner for block_fund"
+      ],
+      "narration": "Today the mandate rules live in two places. Expiry validation is duplicated, and nothing owns the decision to block funds. Every new mandate type means editing both paths.",
+      "cite": "Section 2 - Problem Statement",
+      "broll": { "mood": "abstract" }
+    },
+    {
+      "type": "compare",
+      "heading": "Before and after",
+      "left": { "label": "Legacy", "items": ["Edge to API monolith", "Old gateway", "Rules in PHP"] },
+      "right": { "label": "Rearch", "items": ["Edge to pg-router", "payments-mandate owns rules", "Rules in Go, one place"] },
+      "narration": "The legacy path goes through the monolith and the old gateway. The rearchitected path routes through pg-router into a dedicated mandate service that owns the rules outright.",
+      "cite": "Section 4 - Proposed Architecture",
+      "broll": { "mood": "abstract" }
+    },
+    {
+      "type": "diagram",
+      "heading": "The rearch path",
+      "mermaid": "graph TD\n  A[Edge] --> B[pg-router]\n  B --> C[CPS]\n  C --> D[payments-upi]\n  D --> E[payments-mandate]\n  E --> F[(mandate_setups)]",
+      "narration": "A request enters at Edge, and pg-router evaluates a Splitz experiment to decide rearch or legacy. If it is rearch, it flows through CPS and payments-upi into payments-mandate, which persists the mandate setup.",
+      "cite": "Section 4.1 - Request Flow",
+      "broll": { "mood": "dataflow" }
+    },
+    {
+      "type": "bullets",
+      "heading": "Watch out for",
+      "bullets": [
+        "frequency=one_time forces block_fund",
+        "Insurance MCCs cap expiry at 14 days",
+        "type must be mapped from the token"
+      ],
+      "narration": "Three things bite. A one-time frequency always forces block fund on. Insurance merchant categories cap expiry at fourteen days instead of thirty years. And if pg-router does not map the type field off the token, it lands empty in the database.",
+      "cite": "Section 6 - Edge Cases",
+      "broll": { "mood": "servers" }
+    },
+    {
+      "type": "outro",
+      "cta": "Read the full spec",
+      "url": "https://aidocs.razorpay.com/app/d/doc_sample_otm_rearch",
+      "narration": "The full spec has the sequence diagrams and the rollout plan.",
+      "broll": { "mood": "team" }
+    }
+  ]
+}
