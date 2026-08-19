@@ -273,7 +273,15 @@ def _run_gemini_script_stage(
             },
             timeout=60,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text.strip()
+            if detail:
+                detail = f": {detail[:500]}"
+            raise RuntimeError(
+                f"Gemini request failed with HTTP {exc.response.status_code}{detail}"
+            ) from exc
 
         try:
             candidate = _with_source(
