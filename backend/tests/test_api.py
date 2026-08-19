@@ -327,3 +327,28 @@ def test_prompt_text_is_not_truncated():
     body = "sentence. " * 900
     doc = parse_doc_html("doc_x", f"<h2>Big Section</h2><p>{body}</p>")
     assert len(doc.to_prompt_text()) > 8000
+
+
+# ------------------------------------------------------------------ media URLs
+
+def test_media_url_is_absolute(client):
+    """A relative /media path resolves against the WEB app, where nothing is mounted."""
+    created = client.post(
+        "/posts", json={"title": "clip abs", "kind": "clip", "mediaUrl": "/media/x.mp4"}
+    ).json()
+    assert created["mediaUrl"].startswith("http://"), created["mediaUrl"]
+    assert created["mediaUrl"].endswith("/media/x.mp4")
+
+
+def test_absolute_media_url_is_left_alone(client):
+    created = client.post(
+        "/posts",
+        json={"title": "clip already abs", "kind": "clip", "mediaUrl": "https://cdn.example/x.mp4"},
+    ).json()
+    assert created["mediaUrl"] == "https://cdn.example/x.mp4"
+
+
+def test_upload_returns_an_absolute_url(client):
+    r = client.post("/uploads", files={"file": ("clip.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4")})
+    assert r.status_code == 201, r.text
+    assert r.json()["mediaUrl"].startswith("http://")

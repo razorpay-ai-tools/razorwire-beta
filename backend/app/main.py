@@ -201,9 +201,20 @@ def _viewer_flags(session: Session, user: User, post_ids: list[str]) -> tuple[se
     return liked, saved
 
 
+def _absolute_media(url: str | None) -> str | None:
+    """Media is served by this service, so relative paths must be qualified.
+
+    A bare "/media/x.mp4" resolves against whatever origin the client is on -- for the
+    web app that is :3000, where nothing is mounted, so every clip 404'd.
+    """
+    if not url or not url.startswith("/"):
+        return url
+    return f"{settings.public_base_url.rstrip('/')}{url}"
+
+
 def _to_out(post: Post, author: User, counts: dict[str, int], liked: bool, saved: bool) -> PostOut:
     return PostOut(
-        **post.model_dump(),
+        **{**post.model_dump(), "media_url": _absolute_media(post.media_url)},
         author=UserOut.model_validate(author),
         likes=counts["likes"],
         saves=counts["saves"],
@@ -397,7 +408,7 @@ def upload_media(user: UserDep, file: UploadFile = File(...)) -> UploadOut:
     destination = MEDIA_DIR / name
     with destination.open("wb") as out:
         shutil.copyfileobj(file.file, out)
-    return UploadOut(media_url=f"/media/{name}")
+    return UploadOut(media_url=_absolute_media(f"/media/{name}"))
 
 
 # --------------------------------------------------------------------------- pipeline

@@ -37,7 +37,7 @@ function isTyping(target: EventTarget | null): boolean {
 
 function Centered({ children }: { children: ReactNode }) {
   return (
-    <div className="grid h-dvh w-full place-items-center bg-neutral-950 px-6">
+    <div className="grid h-dvh w-full place-items-center bg-surface-0 px-6">
       <div className="max-w-xs text-center">{children}</div>
     </div>
   );
@@ -179,9 +179,9 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
       <Centered>
         <div
           aria-hidden
-          className="mx-auto size-12 animate-pulse rounded-2xl border border-neutral-800 bg-neutral-900"
+          className="mx-auto size-12 animate-pulse rounded-2xl border border-hairline bg-surface-2"
         />
-        <p role="status" className="mt-4 text-sm text-neutral-400">
+        <p role="status" className="mt-4 text-sm text-ink-muted">
           Loading the feed…
         </p>
       </Centered>
@@ -190,8 +190,8 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
     body = (
       <Centered>
         <Icon name="alert" label={null} className="mx-auto size-7 text-warning" />
-        <h2 className="mt-3 text-base font-semibold text-white">The feed did not load</h2>
-        <p className="mt-1.5 text-sm text-neutral-400">{error}</p>
+        <h2 className="mt-3 text-base font-semibold text-ink">The feed did not load</h2>
+        <p className="mt-1.5 text-sm text-ink-muted">{error}</p>
         <button
           type="button"
           onClick={() => {
@@ -209,8 +209,8 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
     body = (
       <Centered>
         <Icon name="sparkle" label={null} className="mx-auto size-7 text-brand-300" />
-        <h2 className="mt-3 text-base font-semibold text-white">Nothing here yet</h2>
-        <p className="mt-1.5 text-sm text-neutral-400">
+        <h2 className="mt-3 text-base font-semibold text-ink">Nothing here yet</h2>
+        <p className="mt-1.5 text-sm text-ink-muted">
           Post a clip, or turn a spec into an explainer, and it lands here.
         </p>
       </Centered>
@@ -232,11 +232,16 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
 
   return (
     <MuteProvider>
-      <div className="flex h-dvh w-full justify-center bg-neutral-950 md:gap-6 md:px-6">
-        <div className="relative h-dvh w-full md:max-w-md">
+      <div className="flex h-dvh w-full justify-center bg-surface-0 md:gap-6 md:px-6">
+        {/*
+         * The 9:16 frame up to md. At lg the post itself becomes a split card that owns
+         * its own frame, so the column widens and the outer ring comes off rather than
+         * drawing a second border around the card's.
+         */}
+        <div className="relative h-dvh w-full md:max-w-md lg:max-w-6xl">
           <div
             ref={scrollRef}
-            className="h-dvh w-full snap-y snap-mandatory overflow-y-scroll overscroll-y-contain bg-neutral-950 md:rounded-2xl md:ring-1 md:ring-neutral-800"
+            className="h-dvh w-full snap-y snap-mandatory overflow-y-scroll overscroll-y-contain bg-surface-0 md:rounded-2xl md:ring-1 md:ring-hairline lg:rounded-none lg:ring-0"
           >
             {body}
           </div>
@@ -267,10 +272,16 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
           ) : null}
         </div>
 
-        {/* Reserved for the inspector panel. Owned elsewhere; this is only the slot. */}
-        <div className="hidden shrink-0 self-stretch overflow-y-auto py-6 md:block md:w-72 lg:w-80">
-          {aside}
-        </div>
+        {/*
+         * Optional side slot. Rendered only when something is passed: from lg the audit
+         * trail lives inside the post's own card, so an always-present empty column would
+         * just take 320px away from it.
+         */}
+        {aside ? (
+          <div className="hidden shrink-0 self-stretch overflow-y-auto py-6 md:block md:w-72 lg:w-80">
+            {aside}
+          </div>
+        ) : null}
       </div>
     </MuteProvider>
   );

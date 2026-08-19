@@ -20,8 +20,19 @@ import { useReel } from './useReel';
  * Background plate. A missing clip is normal — the library is mood-keyed and
  * cached, so a storyboard can reference a mood we never generated. Falling back to
  * the accent gradient keeps the frame from going black.
+ *
+ * Exported for the desktop card's stage, which needs the identical fallback and
+ * play/pause behaviour. One implementation, two compositions.
  */
-function Broll({ src, accent, active }: { src: string | null; accent: string; active: boolean }) {
+export function Broll({
+  src,
+  accent,
+  active,
+}: {
+  src: string | null;
+  accent: string;
+  active: boolean;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   const [brokenSrc, setBrokenSrc] = useState<string | null>(null);
 

@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     # web app origin, for CORS
     web_origin: str = "http://localhost:3000"
 
+    #: This API's own public origin. Uploaded media is served by THIS service, so a
+    #: relative "/media/..." would resolve against the web app and 404. Responses carry
+    #: absolute URLs instead, which keeps every client correct without each one having
+    #: to know where media lives.
+    public_base_url: str = "http://localhost:8000"
+
     # --- auth -----------------------------------------------------------------
     google_client_id: str = ""
     allowed_hd: str = "razorpay.com"

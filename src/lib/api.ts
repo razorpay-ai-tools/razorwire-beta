@@ -215,10 +215,18 @@ export function docHref(storyboard: Storyboard | null): string | null {
   return source.docId ? `${AIDOCS_BASE}/${source.docId}` : null;
 }
 
-/** Public URL for a cached Veo background clip, or null when the scene has no footage. */
+/**
+ * Public URL for a cached Veo background clip, or null when none is resolved.
+ *
+ * Keyed on `clipId`, which the visual resolver assigns — NOT on `mood`. Falling back
+ * to the mood name guessed at a filename, so every scene fired a request for a clip
+ * we had never generated and logged a 404 before showing the gradient. The gradient is
+ * the correct state until the Veo library exists; it should not cost a failed request
+ * to reach it.
+ */
 export function brollSrc(scene: Scene): string | null {
-  if (!scene.broll) return null;
-  return `/broll/${scene.broll.clipId ?? scene.broll.mood}.mp4`;
+  const clipId = scene.broll?.clipId;
+  return clipId ? `/broll/${clipId}.mp4` : null;
 }
 
 export function initialsOf(user: Pick<ApiUser, 'name' | 'email'>): string {

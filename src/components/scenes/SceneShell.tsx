@@ -33,9 +33,20 @@ export interface SceneShellProps {
   children: ReactNode;
 }
 
+/**
+ * Clearance for the feed's action rail, which floats over the right edge of the frame.
+ *
+ * `scene-safe` pads 1.25rem inline, but the rail is ~56px wide, so wide scene content
+ * (bullet panels, the compare panes, the code block) ran underneath the like and
+ * comment buttons. Applied only when the scene is not centred: title and outro have
+ * narrow, centre-aligned content that sits above the rail's vertical band, and padding
+ * one side would visibly throw their centring off.
+ */
+const RAIL_CLEARANCE = 'pr-[4.75rem]';
+
 export function SceneShell({ cite, active, centered = false, children }: SceneShellProps) {
   return (
-    <div className="scene-safe flex h-full w-full flex-col">
+    <div className={`scene-safe flex h-full w-full flex-col ${centered ? '' : RAIL_CLEARANCE}`}>
       {/*
        * The chip leads the scene rather than trailing it. Below the content it landed
        * on the author row, because the bottom of the safe area is exactly where the

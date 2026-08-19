@@ -11,6 +11,8 @@
 import type { Scene } from '@/lib/storyboard.types';
 
 export type IconName =
+  | 'sun'
+  | 'moon'
   | 'bolt'
   | 'comment'
   | 'bookmark'
@@ -29,6 +31,8 @@ export type IconName =
   | 'quote';
 
 const PATHS: Record<IconName, string> = {
+  sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v3M12 20v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1 12h3M20 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1',
+  moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
   bolt: 'M13 2 4.5 13.2h5.2L9 22l8.6-11.3h-5.3z',
   comment: 'M21 12a8 8 0 0 1-8 8H8l-5 3 1.3-4.6A8 8 0 1 1 21 12z',
   bookmark: 'M6 3h12v18l-6-4.5L6 21z',

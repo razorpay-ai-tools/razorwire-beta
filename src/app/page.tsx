@@ -12,6 +12,7 @@ import { useCallback, useState, type ReactNode } from 'react';
 import { GeneratePanel } from '@/components/create/GeneratePanel';
 import { UploadClipForm } from '@/components/create/UploadClipForm';
 import { FeedScreen } from '@/components/feed/FeedScreen';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { Icon } from '@/components/ui';
 
 type Sheet = 'none' | 'generate' | 'upload';
@@ -53,6 +54,8 @@ export default function Home() {
             <Icon name="upload" label={null} className="size-3.5" />
             Upload
           </button>
+          <span aria-hidden className="mx-0.5 h-5 w-px bg-white/10" />
+          <ThemeToggle />
         </div>
       </div>
 
