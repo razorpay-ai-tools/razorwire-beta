@@ -140,7 +140,12 @@ def test_tool_schema_hides_pipeline_fields():
 
 
 def test_health_needs_no_auth(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    # The web app gates the video option on this, so it has to be a real answer about
+    # this machine rather than an optimistic constant.
+    assert isinstance(body["render"], bool)
+    assert body["render"] is (body["renderMissing"] == [])
 
 
 def test_me_creates_the_user_on_first_sight(client):

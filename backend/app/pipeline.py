@@ -97,7 +97,34 @@ def _system_prompt() -> str:
     )
 
 
-def _user_prompt(kind: str, text: str, doc_title: str | None) -> str:
+#: Written on top of the base brief when the storyboard is destined for an MP4 rather
+#: than the browser reel. The contract does not change — citations, the node cap and the
+#: sixty-second budget all still hold — but what makes a good sixty seconds does.
+#:
+#: The reel is read as much as watched: it pauses, it is scrubbed, its captions carry the
+#: text. A rendered video plays once, straight through, usually with sound. That wants a
+#: spine, a worked example and narration written to be heard rather than skimmed.
+_VIDEO_STYLE = """
+This storyboard becomes a RENDERED VIDEO with a spoken voice track, watched once from
+start to finish. Write it as a short informative film, not as slides:
+
+- ONE WORKED EXAMPLE, carried through. Pick a single concrete case the document supports —
+  one request, one mandate, one outage — and follow it across the scenes so the viewer
+  tracks a story instead of a list of facts. Use the document's real names and numbers.
+- ARC, NOT AGENDA. Open on the stake: what breaks, what it costs, who feels it. Turn on
+  the change. Close on what is different now. Never open with "this document covers".
+- SPOKEN, NOT WRITTEN. Contractions, short sentences, one idea per sentence. The voice is
+  the whole soundtrack, so a sentence that would be skimmed on screen has to be heard. No
+  lists read aloud as lists.
+- LET THE BULLETS BE THE SLIDE. On-screen bullets are a few words each; the narration says
+  the sentence around them. Never read a bullet verbatim.
+- The example is not a licence to invent. If the document does not give you specifics,
+  narrate the general case and cite it — a made-up number in a spoken video is worse than
+  in text, because nobody pauses to check it.
+"""
+
+
+def _user_prompt(kind: str, text: str, doc_title: str | None, *, style: str = "reel") -> str:
     if kind == "aidoc":
         head = f"Document: {doc_title or 'untitled'}\n\nTurn this document into a storyboard."
     elif kind == "slack":
@@ -121,7 +148,8 @@ def _user_prompt(kind: str, text: str, doc_title: str | None) -> str:
             "Topic (no source document, so omit `cite` and do not state specifics you cannot "
             "support):\n"
         )
-    return f"{head}\n\n---\n{text[:_MAX_SOURCE_CHARS]}\n---"
+    brief = f"{head}{_VIDEO_STYLE if style == 'video' else ''}"
+    return f"{brief}\n\n---\n{text[:_MAX_SOURCE_CHARS]}\n---"
 
 
 def run_script_stage(
@@ -131,9 +159,13 @@ def run_script_stage(
     doc_id: str | None = None,
     doc_title: str | None = None,
     doc_url: str | None = None,
+    style: str = "reel",
 ) -> Storyboard:
     """Generate and validate a storyboard.
 
+    :param style: ``"reel"`` for the browser storyboard, ``"video"`` for one destined for
+        an MP4 with a spoken track. Same contract either way; different brief, because a
+        video is watched once with sound and a reel is scrubbed and read.
     :raises RuntimeError: if no API key is configured
     :raises StoryboardInvalid: if the model cannot produce a valid storyboard in
         ``MAX_ATTEMPTS`` attempts; carries the final round of errors
@@ -152,7 +184,9 @@ def run_script_stage(
         "description": "Emit the finished storyboard.",
         "input_schema": tool_input_schema(),
     }
-    messages: list[dict] = [{"role": "user", "content": _user_prompt(kind, text, doc_title)}]
+    messages: list[dict] = [
+        {"role": "user", "content": _user_prompt(kind, text, doc_title, style=style)}
+    ]
     last_errors: list[str] = ["model produced no tool call"]
 
     for attempt in range(1, MAX_ATTEMPTS + 1):

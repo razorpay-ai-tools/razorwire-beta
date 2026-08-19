@@ -203,6 +203,12 @@ class GenerateRequest(_Out):
     #: Slack message permalink, for kind="slack". A link to any reply works — the
     #: adapter resolves it to the parent thread.
     slack_url: str | None = None
+    #: What to produce. "reel" plays the storyboard in the browser and narrates with the
+    #: Web Speech API — seconds to publish, no tooling. "video" renders an MP4 with a
+    #: spoken track, which needs ffmpeg and Chromium on the box and is written as a short
+    #: film rather than as slides. Default stays "reel" so nothing changes for callers
+    #: that predate the choice.
+    format: Literal["reel", "video"] = "reel"
 
 
 class JobOut(_Out):
@@ -392,8 +398,27 @@ def _channels_out(session: Session, user: User, channels: list[Channel]) -> list
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    """Liveness, plus whether this box can render an MP4.
+
+    The web app reads `render` to decide whether to offer the video option at all. Asking
+    here is much kinder than accepting the job and failing it a minute later, and the
+    answer is a property of the machine rather than of the request.
+    """
+    import importlib.util
+    import shutil
+
+    ffmpeg = shutil.which("ffmpeg") is not None
+    playwright = importlib.util.find_spec("playwright") is not None
+    return {
+        "status": "ok",
+        "render": ffmpeg and playwright,
+        "renderMissing": [
+            name
+            for name, present in (("ffmpeg", ffmpeg), ("playwright", playwright))
+            if not present
+        ],
+    }
 
 
 @app.get("/me", response_model=UserOut)
@@ -675,12 +700,17 @@ def upload_media(user: UserDep, file: UploadFile = File(...)) -> UploadOut:
 # --------------------------------------------------------------------------- pipeline
 
 
-def _render_and_publish(session: Session, job: Job, storyboard) -> None:
+def _render_and_publish(session: Session, job: Job, storyboard, *, required: bool = False) -> None:
     """Voice, render and publish. Advances voicing -> rendering -> published.
 
-    Falls back to a storyboard-only post (the browser reel) when the render tooling
-    is unavailable, so a box without ffmpeg/Chromium still produces a playable post.
-    Rendering is imported lazily so a missing optional dependency never blocks boot.
+    :param required: the caller asked for a video specifically. Missing tooling is then an
+        error, not something to paper over. Silently publishing a browser reel instead is
+        what made "I asked for a video and got narration" look like a bug in the product
+        rather than an ffmpeg that was never installed.
+
+    With ``required`` false, missing tooling falls back to a storyboard-only post so a box
+    without ffmpeg or Chromium still produces something playable. Rendering is imported
+    lazily either way, so an absent optional dependency never blocks boot.
     """
     from .render import RenderUnavailable, render_from_voiced, voice_storyboard
     from .render.publish import publish_render, publish_storyboard_only
@@ -699,6 +729,12 @@ def _render_and_publish(session: Session, job: Job, storyboard) -> None:
 
         publish_render(session, job, storyboard, result)
     except RenderUnavailable as exc:
+        if required:
+            raise RuntimeError(
+                f"a video was requested but this box cannot render one: {exc}. "
+                "Install ffmpeg and Playwright's Chromium, or generate a storyboard reel "
+                "instead — the reel narrates in the browser and needs neither."
+            ) from exc
         log.warning("render tooling unavailable (%s); publishing storyboard-only", exc)
         publish_storyboard_only(session, job, storyboard)
 
@@ -762,6 +798,7 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
                 doc_id=body.doc_id,
                 doc_title=doc_title,
                 doc_url=doc_url,
+                style=body.format,
             )
 
             # Stored in our INTERNAL shape: the feed's scene components dispatch on
@@ -781,7 +818,16 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
                 # turn that into a mystery during rendering.
                 log.error("job %s cannot be rendered to MP4: %s", job_id, invalid.errors)
 
-            _render_and_publish(session, job, storyboard)
+            if body.format == "video":
+                _render_and_publish(session, job, storyboard, required=True)
+            else:
+                # A reel is the storyboard itself, so voicing and rendering are skipped
+                # rather than attempted and discarded: they cost a minute of ffmpeg for a
+                # file the browser reel never plays.
+                from .render.publish import publish_storyboard_only
+
+                publish_storyboard_only(session, job, storyboard)
+                job.state, job.progress = "published", 100
         except StoryboardInvalid as invalid:
             job.state, job.error = "failed", "; ".join(invalid.errors)
             log.warning("job %s failed validation: %s", job_id, invalid.errors)

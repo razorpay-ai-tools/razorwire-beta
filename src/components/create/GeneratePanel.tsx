@@ -12,9 +12,9 @@
  * avoid. There is no "Target Audience" field — the API has no such parameter.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, type GenerateRequest, type Job } from '@/lib/api';
+import { api, type GenerateFormat, type GenerateRequest, type Job } from '@/lib/api';
 import { sampleAidoc, sampleAidocTitle } from '@/lib/sample-doc';
 import { ChannelSelect } from '@/components/channels/ChannelSelect';
 import { Icon } from '@/components/ui';
@@ -46,6 +46,29 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
   const [topic, setTopic] = useState('');
   // Chosen before generation, applied when the finished storyboard becomes a post.
   const [channelId, setChannelId] = useState('');
+  const [format, setFormat] = useState<GenerateFormat>('reel');
+  // Whether the API box can render an MP4 at all. Null until asked. Offering video on a
+  // machine with no ffmpeg would accept the job and fail it a minute later.
+  const [canRender, setCanRender] = useState<boolean | null>(null);
+  const [renderMissing, setRenderMissing] = useState<string[]>([]);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .health()
+      .then((health) => {
+        if (!live) return;
+        setCanRender(health.render);
+        setRenderMissing(health.renderMissing);
+      })
+      .catch(() => {
+        // Unreachable API is the feed's error to report, not this panel's. Leaving this
+        // null keeps the video option enabled rather than hiding it on a network blip.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const [request, setRequest] = useState<GenerateRequest | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -60,7 +83,7 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
       if (input.length < MIN_INPUT) {
         return 'Describe the topic in a sentence or more — at least 10 characters.';
       }
-      return { kind: 'topic', input };
+      return { kind: 'topic', input, format };
     }
 
     if (!docId) {
@@ -80,6 +103,7 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
       kind: 'aidoc',
       input,
       docId,
+      format,
       ...(trimmedTitle ? { docTitle: trimmedTitle } : {}),
       ...(trimmedRef.startsWith('http') ? { docUrl: trimmedRef } : {}),
     };
@@ -282,6 +306,44 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
         </div>
       )}
 
+      <fieldset className="space-y-2">
+        <legend className="text-xs font-semibold text-neutral-300">Output</legend>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <FormatOption
+            value="reel"
+            checked={format === 'reel'}
+            onSelect={setFormat}
+            label="Storyboard reel"
+            hint="Seconds · plays as scenes, narrated in your browser"
+          />
+          <FormatOption
+            value="video"
+            checked={format === 'video'}
+            onSelect={setFormat}
+            label="Video clip"
+            hint="Minutes · a real MP4 with a spoken track"
+            disabled={canRender === false}
+          />
+        </div>
+
+        {/* Said before the choice, not after a failed job a minute later. */}
+        {canRender === false ? (
+          <p className="flex items-start gap-2 text-[11px] leading-relaxed text-neutral-500">
+            <Icon name="alert" label={null} className="mt-px size-3.5 shrink-0 text-warning" />
+            <span>
+              This API box cannot render video yet — {renderMissing.join(' and ')} missing. The reel
+              needs neither and plays everywhere.
+            </span>
+          </p>
+        ) : format === 'video' ? (
+          <p className="text-[11px] leading-relaxed text-neutral-500">
+            Scripted as a short film rather than as slides: one worked example carried through, an
+            arc instead of an agenda, and narration written to be heard. Same rules — every factual
+            scene still cites its section.
+          </p>
+        ) : null}
+      </fieldset>
+
       <ChannelSelect
         id="generate-channel"
         value={channelId}
@@ -349,6 +411,55 @@ function SourceOption({
           {label}
         </span>
         <span className="mt-0.5 block text-[11px] text-neutral-400">{hint}</span>
+      </span>
+    </label>
+  );
+}
+
+/**
+ * Reel or video. A radio pair, not a toggle: the two are different products with
+ * different costs, and a switch labelled "video" implies the reel is the lesser one.
+ *
+ * Disabled when the API box has no ffmpeg or Chromium, because the alternative is
+ * accepting the job and failing it a minute later.
+ */
+function FormatOption({
+  value,
+  checked,
+  onSelect,
+  label,
+  hint,
+  disabled = false,
+}: {
+  value: GenerateFormat;
+  checked: boolean;
+  onSelect: (format: GenerateFormat) => void;
+  label: string;
+  hint: string;
+  disabled?: boolean;
+}) {
+  return (
+    <label
+      className={`flex flex-1 items-start gap-2.5 rounded-xl border px-3 py-2.5 transition ${
+        disabled
+          ? 'cursor-not-allowed border-neutral-800 bg-neutral-900/30 opacity-60'
+          : checked
+            ? 'cursor-pointer border-brand-500 bg-brand-500/10'
+            : 'cursor-pointer border-neutral-800 bg-neutral-900/60 hover:border-neutral-700'
+      }`}
+    >
+      <input
+        type="radio"
+        name="generate-format"
+        value={value}
+        checked={checked}
+        disabled={disabled}
+        onChange={() => onSelect(value)}
+        className="mt-0.5 size-4 shrink-0 accent-brand-500"
+      />
+      <span className="min-w-0">
+        <span className="block text-xs font-semibold text-neutral-100">{label}</span>
+        <span className="mt-0.5 block text-[11px] leading-relaxed text-neutral-500">{hint}</span>
       </span>
     </label>
   );
