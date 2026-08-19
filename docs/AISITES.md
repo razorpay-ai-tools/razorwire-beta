@@ -13,7 +13,7 @@ Razorwire supports two frontend backend modes:
 
 ```bash
 export NEXT_PUBLIC_BACKEND_MODE=aisites
-export NEXT_PUBLIC_API_URL= # set to https://YOUR_BACKEND_HOST if upload/generation should work
+export NEXT_PUBLIC_API_URL=https://razorwire-api.onrender.com
 npm run build:aisites
 aisites auth login https://aisites.razorpay.com
 aisites deploy razorwire ./out --publish

@@ -40,9 +40,8 @@ It creates missing local env files, installs missing dependencies, then starts:
 - backend API: `http://localhost:8000`
 - API docs: `http://localhost:8000/docs`
 
-Requires `node`, `npm`, and `python3`. Python 3.12 is preferred; the local
-launcher also works with macOS Python 3.9 by installing the annotation backport
-listed in `backend/requirements.txt`.
+Requires `node`, `npm`, and Python 3.12. The backend uses modern Python syntax
+and Render is pinned to Python 3.12 in `render.yaml`.
 
 First run creates:
 
@@ -94,6 +93,7 @@ For shared video uploads, create the Supabase Storage bucket named in
 `SUPABASE_STORAGE_BUCKET` and set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`.
 
 For AiSites frontend hosting, see [`docs/AISITES.md`](docs/AISITES.md).
+For a public FastAPI backend on Render, see [`docs/RENDER.md`](docs/RENDER.md).
 
 To prove cross-user consistency after pointing at Supabase:
 
