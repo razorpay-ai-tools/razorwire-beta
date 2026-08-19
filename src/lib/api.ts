@@ -14,6 +14,7 @@ import type { Scene, Storyboard } from './storyboard.types';
 const EXTERNAL_API_BASE = process.env.NEXT_PUBLIC_API_URL;
 const BASE = EXTERNAL_API_BASE ?? 'http://localhost:8000';
 const BACKEND_MODE = process.env.NEXT_PUBLIC_BACKEND_MODE ?? 'api';
+let flashViewerEmail: Promise<string | null> | null = null;
 
 export interface ApiUser {
   id: string;
@@ -158,11 +159,24 @@ export class ApiError extends Error {
   }
 }
 
+async function currentFlashViewerEmail(): Promise<string | null> {
+  if (typeof window === 'undefined' || !location.hostname.endsWith('.aisites.razorpay.com')) {
+    return null;
+  }
+  flashViewerEmail ??= fetch('/__flash_me__')
+    .then((response) => (response.ok ? response.json() : null))
+    .then((viewer: FlashViewer | null) => viewer?.email ?? null)
+    .catch(() => null);
+  return flashViewerEmail;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const viewerEmail = await currentFlashViewerEmail();
   const response = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       ...(init?.body instanceof FormData ? {} : { 'content-type': 'application/json' }),
+      ...(viewerEmail ? { 'x-dev-email': viewerEmail } : {}),
       ...init?.headers,
     },
   });
