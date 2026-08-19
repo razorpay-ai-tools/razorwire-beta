@@ -39,3 +39,24 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local env
+.env.local
+.env
+
+# generated media
+.storage/
+out/
+public/broll/*.mp4
+
+# python backend
+backend/.venv/
+backend/.env
+backend/*.db
+backend/.storage/
+backend/__pycache__/
+**/__pycache__/
+.pytest_cache/
+
+# stray tool artifacts
+tmp/
