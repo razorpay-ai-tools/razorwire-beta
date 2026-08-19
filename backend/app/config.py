@@ -64,6 +64,17 @@ class Settings(BaseSettings):
     #: config.py landed without it, so `main` fails its own render-contract tests.
     work_dir: str = "./.work"
 
+    # --- render (MP4 pipeline) ------------------------------------------------
+    render_fps: int = 30
+    render_width: int = 1080
+    render_height: int = 1920
+    #: TTS backend: "auto" prefers Kokoro, falls back to macOS `say`, then silence.
+    render_tts: str = "auto"
+    kokoro_voice: str = "af_heart"
+    #: Hard cap on a single scene's spoken length so one runaway scene cannot
+    #: stretch the render; longer scenes are clamped.
+    render_scene_max_ms: int = 15000
+
     @property
     def supabase_storage_enabled(self) -> bool:
         return bool(self.supabase_url and self.supabase_service_role_key and self.supabase_storage_bucket)
