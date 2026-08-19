@@ -1,15 +1,73 @@
 @import "tailwindcss";
 
-:root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+/*
+ * Razorwire design tokens.
+ *
+ * Dark only, deliberately. The feed is full-bleed video, so a light theme would
+ * only ever apply to the create and inspector screens — two themes for two
+ * screens is not worth the cost in a three-day build.
+ *
+ * Corrections against the first design pass, all of which would have failed to
+ * render or shipped an inconsistent ramp:
+ *   - the neutral ramp is defined in FULL. Overriding only 950/900/800/700/400/100
+ *     leaves neutral-600, -500, -300, -200 resolving to Tailwind's stock slate-ish
+ *     values, so the palette drifts wherever someone reaches for a missing step.
+ *   - brand-400 and brand-300 exist. The citation chip specified text-brand-400
+ *     against a token map that stopped at brand-500, which renders as nothing.
+ *   - --animate-fade-in is declared with its keyframes. Tailwind v4 will not
+ *     invent an animation utility from a class name alone.
+ */
+@theme {
+  --color-brand-300: #93b4fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #2563eb;
+  --color-brand-600: #1d4ed8;
+  --color-brand-700: #1e40af;
+
+  --color-neutral-50: #f8fafc;
+  --color-neutral-100: #f1f5f9;
+  --color-neutral-200: #dfe5ee;
+  --color-neutral-300: #c3ccdb;
+  --color-neutral-400: #94a3b8;
+  --color-neutral-500: #6b7787;
+  --color-neutral-600: #4a5464;
+  --color-neutral-700: #333a4e;
+  --color-neutral-800: #1e2230;
+  --color-neutral-900: #12141d;
+  --color-neutral-950: #090a0f;
+
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --animate-fade-in: fade-in 220ms ease-out;
+  --animate-pulse-ring: pulse-ring 1.6s ease-out infinite;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(37 99 235 / 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgb(37 99 235 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(37 99 235 / 0);
+  }
 }
 
 * {
@@ -17,61 +75,124 @@
 }
 
 html {
-  scroll-behavior: smooth;
+  color-scheme: dark;
+  background: var(--color-neutral-950);
+  /* smooth scroll fights scroll-snap on the feed; snap does the animating */
+  scroll-behavior: auto;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  background: var(--color-neutral-950);
+  color: var(--color-neutral-100);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
 }
 
-button,
-a,
-input,
-textarea,
-select {
-  outline-color: #2563eb;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/*
+ * The scrim. ONE recipe, parameterised by weight, rather than the two conflicting
+ * gradients in the first pass.
+ *
+ * `via-transparent` shows more footage but leaves mid-frame text sitting on raw
+ * video, which is exactly where diagram and code scenes put their content. So:
+ * light scrim for title/outro, heavy for anything with dense text. The scene
+ * components pick; they know what they are rendering.
+ */
+@utility scrim-light {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(9 10 15 / 0.75) 0%,
+    rgb(9 10 15 / 0.15) 38%,
+    rgb(9 10 15 / 0.55) 72%,
+    rgb(9 10 15 / 0.92) 100%
+  );
+}
+
+@utility scrim-heavy {
+  background-image: linear-gradient(
+    to bottom,
+    rgb(9 10 15 / 0.88) 0%,
+    rgb(9 10 15 / 0.72) 35%,
+    rgb(9 10 15 / 0.82) 70%,
+    rgb(9 10 15 / 0.95) 100%
+  );
+}
+
+/* Frosted panel that carries text over moving video. */
+@utility panel {
+  border-radius: 1rem;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  background-color: rgb(18 20 29 / 0.6);
+  backdrop-filter: blur(12px);
+}
+
+/*
+ * 9:16 safe areas. Critical content stays out of the top 8% (progress bar,
+ * status bar) and bottom 12% (caption bar, nav).
+ */
+@utility scene-safe {
+  padding-top: 8%;
+  padding-bottom: 12%;
+  padding-inline: 1.25rem;
 }
 
 .input {
   width: 100%;
-  border-radius: 1rem;
-  border: 1px solid #e2e8f0;
-  background: #f8fafc;
-  padding: 0.9rem 1rem;
-  color: #0f172a;
-  font-size: 0.95rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--color-neutral-800);
+  background: var(--color-neutral-900);
+  padding: 0.75rem 0.9rem;
+  color: var(--color-neutral-100);
+  font-size: 0.9rem;
   transition:
     border-color 160ms ease,
-    background 160ms ease,
     box-shadow 160ms ease;
 }
 
 .input:focus {
-  border-color: #60a5fa;
-  background: #ffffff;
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+  border-color: var(--color-brand-500);
+  box-shadow: 0 0 0 3px rgb(37 99 235 / 0.25);
+  outline: none;
 }
 
 .input::placeholder {
-  color: #94a3b8;
+  color: var(--color-neutral-500);
 }
 
+/*
+ * Used by the original prototype components (ReelPlayer, StoryboardPreview) that the
+ * feed replaces. Kept so nothing silently loses its styling mid-migration; delete
+ * together with those components.
+ */
 .player-button {
-  border-radius: 0.9rem;
-  background: #f1f5f9;
+  border-radius: 0.75rem;
+  background: var(--color-neutral-800);
   padding: 0.7rem 0.6rem;
-  color: #334155;
+  color: var(--color-neutral-200);
   font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 700;
   transition:
     transform 160ms ease,
-    background 160ms ease,
-    color 160ms ease;
+    background 160ms ease;
 }
 
 .player-button:hover {
   transform: translateY(-1px);
-  background: #e2e8f0;
+  background: var(--color-neutral-700);
+}
+
+/* Visible keyboard focus everywhere. Non-negotiable, not a nice-to-have. */
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand-400);
+  outline-offset: 2px;
+  border-radius: 0.375rem;
 }
