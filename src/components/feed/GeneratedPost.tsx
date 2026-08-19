@@ -13,7 +13,8 @@ import { SceneView } from '@/components/scenes/SceneView';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, docHref, type Post } from '@/lib/api';
 import { ActionRail } from './ActionRail';
-import { MuteButton, PostMeta, accentBackdrop, useMute } from './chrome';
+import { MuteButton, NarrationRateButton, PostMeta, accentBackdrop, useMute } from './chrome';
+import { useNarration } from './useNarration';
 import { useReel } from './useReel';
 
 /**
@@ -73,8 +74,14 @@ export function Broll({
 
 export function GeneratedPost({ post, active }: { post: Post; active: boolean }) {
   const scenes = useMemo(() => post.storyboard?.scenes ?? [], [post.storyboard]);
-  const { index, count, scene, caption, playing, setPlaying, next, prev } = useReel(scenes, active);
-  const { muted } = useMute();
+  const { muted, rate } = useMute();
+  // Unmuted, the voice paces the reel and the timer stands down. See useNarration.
+  const spoken = !muted && active;
+  const { index, count, scene, caption, playing, setPlaying, next, prev, advance } = useReel(
+    scenes,
+    active,
+    spoken,
+  );
 
   // Left/right arrows move scenes, stories-style. Only the visible post listens.
   useEffect(() => {
@@ -98,20 +105,16 @@ export function GeneratedPost({ post, active }: { post: Post; active: boolean })
   }, [active, next, prev]);
 
   /**
-   * Narration is the Web Speech API on this path — there is no audio track to
-   * unmute, so the shared mute control drives the speech synth instead. It only
-   * ever starts after the user clicks unmute, which also keeps it clear of
-   * autoplay policy.
+   * Narration speaks the caption on screen, and finishing it advances the reel. The
+   * shared mute control is what turns it on — there is no audio track to unmute — so
+   * nothing is ever spoken before a click, which also keeps it clear of autoplay policy.
    */
-  useEffect(() => {
-    const synth = typeof window === 'undefined' ? undefined : window.speechSynthesis;
-    if (!synth || muted || !active || !scene) return;
-
-    const utterance = new SpeechSynthesisUtterance(scene.narration);
-    utterance.rate = 1.02;
-    synth.speak(utterance);
-    return () => synth.cancel();
-  }, [muted, active, scene]);
+  useNarration({
+    text: caption,
+    enabled: spoken && playing,
+    rate,
+    onDone: advance,
+  });
 
   if (!scene) {
     return (
@@ -205,7 +208,11 @@ export function GeneratedPost({ post, active }: { post: Post; active: boolean })
             </span>
           </span>
 
-          <MuteButton className="ml-auto" />
+          {/* Grouped so the pair stays right-aligned when the rate button is hidden. */}
+          <div className="ml-auto flex items-center gap-2">
+            <NarrationRateButton />
+            <MuteButton />
+          </div>
         </div>
       </div>
 

@@ -35,8 +35,9 @@ import { SceneView } from '@/components/scenes/SceneView';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, type Post } from '@/lib/api';
 import { Broll } from './GeneratedPost';
-import { MuteButton, accentBackdrop, useMute } from './chrome';
+import { MuteButton, NarrationRateButton, accentBackdrop, useMute } from './chrome';
 import { DesktopPanel } from './DesktopPanel';
+import { useNarration } from './useNarration';
 import { useReel, type Reel } from './useReel';
 
 /** Tailwind's `lg` breakpoint, as a media query. Kept in one place on purpose. */
@@ -84,10 +85,12 @@ function isTyping(target: EventTarget | null): boolean {
 
 export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
   const scenes = useMemo(() => post.storyboard?.scenes ?? [], [post.storyboard]);
-  // Called unconditionally: a clip simply has no scenes, so the reel is empty and idle.
-  const reel = useReel(scenes, active);
   const generated = post.kind === 'generated';
-  const { muted } = useMute();
+  const { muted, rate } = useMute();
+  // Unmuted, the voice paces the reel and the timer stands down. See useNarration.
+  const spoken = generated && !muted && active;
+  // Called unconditionally: a clip simply has no scenes, so the reel is empty and idle.
+  const reel = useReel(scenes, active, spoken);
   const { next, prev } = reel;
 
   // Left/right step scenes, as on mobile. Only the visible post listens.
@@ -112,18 +115,15 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
   /**
    * There is no audio track on the generated path — narration is the Web Speech API, so
    * the shared mute control drives the synth. Without this the unmute button would be a
-   * control that does nothing on desktop.
+   * control that does nothing on desktop. Same hook as mobile: one implementation of
+   * "speak the caption, then advance", two compositions.
    */
-  useEffect(() => {
-    const synth = typeof window === 'undefined' ? undefined : window.speechSynthesis;
-    const scene = reel.scene;
-    if (!synth || !generated || muted || !active || !scene) return;
-
-    const utterance = new SpeechSynthesisUtterance(scene.narration);
-    utterance.rate = 1.02;
-    synth.speak(utterance);
-    return () => synth.cancel();
-  }, [muted, active, generated, reel.scene]);
+  useNarration({
+    text: reel.caption,
+    enabled: spoken && reel.playing,
+    rate,
+    onDone: reel.advance,
+  });
 
   return (
     <article
@@ -314,7 +314,11 @@ function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel:
             </span>
           </span>
 
-          <MuteButton className="ml-auto" />
+          {/* Grouped so the pair stays right-aligned when the rate button is hidden. */}
+          <div className="ml-auto flex items-center gap-2">
+            <NarrationRateButton />
+            <MuteButton />
+          </div>
         </div>
       </div>
 
