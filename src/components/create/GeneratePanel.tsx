@@ -20,7 +20,7 @@ import { ChannelSelect } from '@/components/channels/ChannelSelect';
 import { Icon } from '@/components/ui';
 import { PipelineStepper } from './PipelineStepper';
 
-/** `GenerateRequest.input` is `min_length=10` on the backend. */
+/** The backend's floor for a TOPIC. The aidoc path needs no text at all — it fetches. */
 const MIN_INPUT = 10;
 
 /** aidocs ids are `doc_` + alphanumerics, e.g. `doc_r523noskel555f7f`. Stopping at the
@@ -66,10 +66,14 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
     if (!docId) {
       return 'No doc id found. Paste an aidocs link like https://aidocs.razorpay.com/app/d/doc_… or the doc_… id on its own.';
     }
+    /*
+     * The id is the whole requirement. `_run_job` fetches the document itself and only
+     * falls back to this text if that fetch fails, so demanding it here made the primary
+     * path — paste a link, get an explainer — impossible, and the differentiator look like
+     * a copy-paste tool. `test_aidoc_generation_no_longer_requires_pasted_input` pins the
+     * server side of this.
+     */
     const input = docText.trim();
-    if (input.length < MIN_INPUT) {
-      return 'Paste the document body too. The id records where it came from; the text is what gets turned into scenes.';
-    }
     const trimmedRef = docRef.trim();
     const trimmedTitle = docTitle.trim();
     return {
@@ -228,7 +232,7 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
           <div>
             <div className="flex items-baseline justify-between gap-3">
               <label htmlFor="doc-text" className="block text-xs font-semibold text-neutral-300">
-                Document body
+                Document body <span className="font-normal text-neutral-500">(optional)</span>
               </label>
               <button
                 type="button"
@@ -242,14 +246,15 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
               id="doc-text"
               name="doc-text"
               className="input mt-1.5 min-h-48 resize-y leading-relaxed"
-              placeholder="Paste the aidoc contents. Section headings matter — they become the citations."
+              placeholder="Leave this empty. Paste the contents only if the server cannot reach the doc."
               value={docText}
               onChange={(event) => setDocText(event.target.value)}
               aria-describedby="doc-text-hint"
             />
             <p id="doc-text-hint" className="mt-1.5 text-[11px] text-neutral-500">
-              {docText.trim().length} characters. Keep the headings in — they are what the citation
-              chips point at.
+              {docText.trim().length
+                ? `${docText.trim().length} characters, used instead of fetching. Keep the headings in — they are what the citation chips point at.`
+                : 'The link is enough — the server reads the document itself. This is the fallback for when that fails, and it needs the headings kept in.'}
             </p>
           </div>
         </div>
