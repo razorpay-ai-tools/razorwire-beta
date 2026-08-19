@@ -1,16 +1,6 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, JetBrains_Mono } from 'next/font/google';
 import Script from 'next/script';
 import './globals.css';
-
-// Token names in globals.css point at these variables, so the font pair is loaded
-// here rather than referenced by family name and hoped for.
-const inter = Inter({ variable: '--font-inter', subsets: ['latin'], display: 'swap' });
-const jetbrainsMono = JetBrains_Mono({
-  variable: '--font-jetbrains-mono',
-  subsets: ['latin'],
-  display: 'swap',
-});
 
 export const metadata: Metadata = {
   title: 'Razorwire',
@@ -40,7 +30,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
+      className="h-full antialiased"
     >
       <body className="min-h-full bg-surface-0 text-ink">
         {/*

@@ -49,7 +49,9 @@ function readCachedFeed(key: string): FeedPage | null {
     const cached = localStorage.getItem(key);
     if (!cached) return null;
     const page = JSON.parse(cached) as FeedPage;
-    return Array.isArray(page.items) ? page : null;
+    if (!Array.isArray(page.items)) return null;
+    if (page.items.some((post) => !post?.id || !post.author)) return null;
+    return page;
   } catch {
     return null;
   }
@@ -111,15 +113,25 @@ export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
   const [paging, setPaging] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [reloadToken, setReloadToken] = useState(0);
+  const [trackedFilter, setTrackedFilter] = useState(filterKey);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const viewed = useRef(new Set<string>());
   const inFlight = useRef(false);
 
-  // A different slice means everything on screen belongs to the previous one. Reset
-  // during render rather than in an effect, which would paint the stale posts once.
-  const [trackedFilter, setTrackedFilter] = useState(filterKey);
+  /*
+   * A different slice means everything on screen belongs to the previous one, so it is
+   * cleared. Adjusted DURING RENDER, which is React's documented pattern for state that
+   * derives from a changed prop.
+   *
+   * main resolved this into an effect that calls the setters in its body. That trips the
+   * repo's own `react-hooks/set-state-in-effect` rule — `npm run lint` fails on main's
+   * copy of this file today — and it also cannot read the cache the way it wants to
+   * without reintroducing the hydration mismatch, since `localStorage` does not exist on
+   * the server. Cache repainting therefore stays in the fetch effect below, in a
+   * callback, where it is allowed to happen.
+   */
   if (trackedFilter !== filterKey) {
     setTrackedFilter(filterKey);
     setPosts([]);
