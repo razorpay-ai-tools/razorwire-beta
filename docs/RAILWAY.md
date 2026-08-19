@@ -49,10 +49,12 @@ SUPABASE_STORAGE_PUBLIC=true
 MAX_UPLOAD_BYTES=52428800
 ANTHROPIC_MODEL=claude-sonnet-5
 ANTHROPIC_API_KEY=...
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_API_KEY=...
 ```
 
-`ANTHROPIC_API_KEY` is only needed for AI generation. Video upload only needs the
-Supabase values.
+AI generation uses Anthropic first when `ANTHROPIC_API_KEY` is set, then Gemini
+when `GEMINI_API_KEY` is set. Video upload only needs the Supabase values.
 
 ## Redeploy backend from local checkout
 
