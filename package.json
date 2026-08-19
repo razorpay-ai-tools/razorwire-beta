@@ -9,6 +9,7 @@
     "build:aisites": "AISITES_EXPORT=1 next build --webpack",
     "start": "next start",
     "lint": "eslint",
+    "check:aisites": "node --no-warnings src/lib/__check-aisites-api.mts",
     "gen:types": "cd backend && uv run python scripts/emit_contract.py"
   },
   "dependencies": {
