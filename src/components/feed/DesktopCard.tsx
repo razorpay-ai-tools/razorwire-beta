@@ -32,7 +32,7 @@ import {
   type CSSProperties,
 } from 'react';
 import { SceneView } from '@/components/scenes/SceneView';
-import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
+import { Icon, scrimFor } from '@/components/ui';
 import { brollSrc, type Post } from '@/lib/api';
 import { Broll } from './GeneratedPost';
 import {
@@ -223,7 +223,7 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
  * own clicks. With the zones on top, the outro's link was visible and dead.
  */
 function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel: Reel }) {
-  const { index, count, scene, caption, playing, setPlaying, next, prev } = reel;
+  const { scene, playing, setPlaying, next, prev } = reel;
 
   if (!scene) {
     return (
@@ -297,8 +297,6 @@ function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel:
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex flex-col items-start gap-2.5 px-4 pt-4">
-        <ProgressRail count={count} current={index} />
-
         <div className="flex w-full items-center gap-2">
           <button
             type="button"
@@ -312,12 +310,6 @@ function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel:
           <span className="panel flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-300">
             <Icon name="sparkle" label={null} className="size-3.5 shrink-0 text-brand-300" />
             AI reel
-            <span aria-hidden className="text-neutral-600">
-              &middot;
-            </span>
-            <span className="tabular-nums">
-              {index + 1}/{count}
-            </span>
           </span>
 
           {/* Grouped so the pair stays right-aligned when the rate button is hidden. */}
@@ -329,11 +321,6 @@ function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel:
         </div>
       </div>
 
-      {caption ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 px-4 pb-4">
-          <CaptionBar text={caption} />
-        </div>
-      ) : null}
     </>
   );
 }

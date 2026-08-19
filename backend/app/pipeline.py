@@ -273,7 +273,7 @@ def _run_gemini_script_stage(
                     "temperature": 0.3,
                 },
             },
-            timeout=60,
+            timeout=180,
         )
         try:
             response.raise_for_status()

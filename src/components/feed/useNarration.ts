@@ -151,7 +151,6 @@ export function useNarration({ text, enabled, rate, onDone }: NarrationOptions):
     // Narrowed once, so the nested function below keeps the types.
     const speech = synth;
     const line = text;
-
     let cancelled = false;
     let watchdog = 0;
     let startTimer = 0;
@@ -203,13 +202,14 @@ export function useNarration({ text, enabled, rate, onDone }: NarrationOptions):
         }, START_TIMEOUT_MS);
       }
 
-      utterance.rate = rate;
+      utterance.rate = rate * 0.96;
       // Slightly under the default. At 1.0 the neural voices land every sentence on the
       // same note, which is the thing that reads as synthetic more than the timbre does.
-      utterance.pitch = 0.95;
+      utterance.pitch = 0.98;
 
       utterance.onend = () => {
         trace('ended');
+        window.clearTimeout(watchdog);
         finish();
       };
 

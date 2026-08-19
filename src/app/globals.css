@@ -162,6 +162,7 @@
   95% { transform: scaleY(0.1); }
 }
 
+
 .character {
   position: relative;
   animation: character-bob 2.4s ease-in-out infinite;
