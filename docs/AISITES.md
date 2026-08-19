@@ -3,9 +3,16 @@
 AiSites can host Razorwire's built frontend. It does not run the FastAPI backend
 process, so keep the backend on a normal app host and point the frontend at it.
 
+Razorwire supports two frontend backend modes:
+
+- `api` — existing FastAPI backend. This is the default.
+- `aisites` — AiSites DB for feed/profile/channels/social state. Video upload and
+  generation still call FastAPI through `NEXT_PUBLIC_API_URL` when configured.
+
 ## Deploy frontend
 
 ```bash
+export NEXT_PUBLIC_BACKEND_MODE=aisites
 export NEXT_PUBLIC_API_URL=https://YOUR_BACKEND_HOST
 npm run build:aisites
 aisites auth login https://aisites.razorpay.com
@@ -33,11 +40,15 @@ SUPABASE_STORAGE_PUBLIC=true
 
 ## AiSites-only backend path
 
-To run without FastAPI, replace backend calls with AiSites primitives:
+The `aisites` adapter already uses:
 
 - posts/comments/likes/saves/views: `/__flash_db__`
 - signed-in user: `/__flash_me__`
-- secrets/LLM calls: `/__flash_proxy__`
-- live feed refresh: `/__flash_ws__`
 
-That is a backend rewrite, not a hosting switch.
+Still external/backend-backed:
+
+- video uploads
+- aidocs/Slack ingestion
+- Claude generation/jobs
+
+Those need either FastAPI or a later `/__flash_proxy__` rewrite.

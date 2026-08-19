@@ -73,6 +73,7 @@ MAX_UPLOAD_BYTES=52428800
 
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_BACKEND_MODE=api
 ```
 
 `DEV_AUTH_EMAIL` is the local auth bypass. Unset, the API requires a Google ID
