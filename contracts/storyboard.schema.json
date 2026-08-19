@@ -44,7 +44,7 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose. No markdown, no stage directions. Expand abbreviations a voice would stumble on.",
+          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
           "maxLength": 420,
           "minLength": 10,
           "title": "Narration",
@@ -107,7 +107,7 @@
             "minLength": 3,
             "type": "string"
           },
-          "maxItems": 5,
+          "maxItems": 4,
           "minItems": 2,
           "title": "Bullets",
           "type": "array"
@@ -126,7 +126,7 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose. No markdown, no stage directions. Expand abbreviations a voice would stumble on.",
+          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
           "maxLength": 420,
           "minLength": 10,
           "title": "Narration",
@@ -258,7 +258,7 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose. No markdown, no stage directions. Expand abbreviations a voice would stumble on.",
+          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
           "maxLength": 420,
           "minLength": 10,
           "title": "Narration",
@@ -335,7 +335,7 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose. No markdown, no stage directions. Expand abbreviations a voice would stumble on.",
+          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
           "maxLength": 420,
           "minLength": 10,
           "title": "Narration",
@@ -411,7 +411,7 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose. No markdown, no stage directions. Expand abbreviations a voice would stumble on.",
+          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
           "maxLength": 420,
           "minLength": 10,
           "title": "Narration",
@@ -575,7 +575,7 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose. No markdown, no stage directions. Expand abbreviations a voice would stumble on.",
+          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
           "maxLength": 420,
           "minLength": 10,
           "title": "Narration",
@@ -663,7 +663,7 @@
       "$ref": "#/$defs/StoryboardSource"
     },
     "scenes": {
-      "description": "3-8 scenes, under 60 seconds spoken in total.",
+      "description": "4-6 scenes, under 60 seconds spoken in total. Byte-sized reel.",
       "items": {
         "discriminator": {
           "mapping": {
@@ -697,8 +697,8 @@
           }
         ]
       },
-      "maxItems": 8,
-      "minItems": 3,
+      "maxItems": 6,
+      "minItems": 4,
       "title": "Scenes",
       "type": "array"
     }
