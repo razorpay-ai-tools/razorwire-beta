@@ -21,6 +21,17 @@ Expected:
 {"status":"ok"}
 ```
 
+## Keep warm
+
+Use any external uptime monitor to ping `/health` every 3-5 minutes:
+
+```txt
+https://razorwire-api-production.up.railway.app/health
+```
+
+Treat this as demo warmup, not an always-on production guarantee. Free providers
+may still cold-start or rate-limit idle services.
+
 ## Required Railway env vars
 
 Set on the `razorwire-api` service:
