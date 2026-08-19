@@ -37,21 +37,33 @@ You produce a storyboard. Another system renders it, narrates it, and publishes 
 Rules that matter more than style:
 
 1. GROUNDING. Every factual scene must carry a `cite` naming the section it came from, using the
-   document's own section headings. If the document does not say something, do not put it in the
-   storyboard. A viewer must be able to check any claim against the spec.
+   source's own headings verbatim — a document section for a document, or the author-and-time
+   heading of a message for a Slack thread. If the source does not say something, do not put it
+   in the storyboard. A viewer must be able to check any claim against the source.
 
 2. DIAGRAMS ARE REAL. For architecture, emit actual Mermaid describing the actual components and
    their actual direction of flow, using the document's real service and entity names. Maximum
    {{max_nodes}} nodes, or it will be rejected as illegible on a phone. Prefer `graph TD` for a
    vertical frame. Never invent a component the document does not mention.
 
-3. NARRATION IS SPOKEN. Plain prose a voice reads aloud. No markdown, no bullet characters, no
-   stage directions. Expand things a voice stumbles on: "MCC" becomes "merchant category code",
-   "block_fund" becomes "block fund". On-screen `bullets` are read by the eye, narration by the
-   ear — they should not be the same words.
+3. NARRATION IS SPOKEN. Plain prose a voice reads aloud, at most {{max_sentences}} sentences per
+   scene. No markdown, no bullet characters, no emoji, no stage directions, and never a URL —
+   the voice reads "https colon slash slash" out loud. Expand things a voice stumbles on: "MCC"
+   becomes "merchant category code", "block_fund" becomes "block fund". On-screen `bullets` are
+   read by the eye, narration by the ear — they should not be the same words.
 
-4. BUDGET. 3 to 8 scenes, and all narration together must stay under 60 seconds spoken, which is
-   roughly 150 words in total. Open with why an engineer should care; close with an outro.
+4. BUDGET. {{min_scenes}} to {{max_scenes}} scenes, and all narration together must stay under 60
+   seconds spoken, which is roughly 150 words in total. Open with why an engineer should care;
+   close with an outro.
+
+4b. ARCHITECTURE IS ALWAYS A DIAGRAM. Never describe a system in prose or bullets when the
+   document gives you components and flow. When the document has both a current and a proposed
+   architecture, emit them as TWO SEPARATE `diagram` scenes, in that order, so the change is
+   visible rather than asserted. Every Mermaid graph must start with `graph LR` or `graph TD`.
+
+4c. `compare` IS A LIGHT DEVICE. Its per-side items do not survive into the final video, so use
+   it only when the two labels alone carry the point. Anything with real content belongs in
+   `bullets`, and any before/after architecture belongs in two `diagram` scenes per 4b.
 
 5. FOOTAGE. `broll.mood` picks background video from a fixed set: {{moods}}. It is decoration
    behind your content and carries no information. Use `abstract` behind dense scenes such as
@@ -64,10 +76,18 @@ _TOOL_NAME = "emit_storyboard"
 
 
 def _system_prompt() -> str:
-    from .storyboard import MAX_MERMAID_NODES
+    from .storyboard import (
+        MAX_MERMAID_NODES,
+        MAX_NARRATION_SENTENCES,
+        MAX_SCENES,
+        MIN_SCENES,
+    )
 
     return _SYSTEM.format(
         max_nodes=MAX_MERMAID_NODES,
+        max_sentences=MAX_NARRATION_SENTENCES,
+        min_scenes=MIN_SCENES,
+        max_scenes=MAX_SCENES,
         moods=", ".join(m.value for m in BrollMood),
     )
 
@@ -75,6 +95,22 @@ def _system_prompt() -> str:
 def _user_prompt(kind: str, text: str, doc_title: str | None) -> str:
     if kind == "aidoc":
         head = f"Document: {doc_title or 'untitled'}\n\nTurn this document into a storyboard."
+    elif kind == "slack":
+        # A thread is an argument that ended somewhere, not a document. The section
+        # headings are "Author, HH:MM" per message, so `cite` names who said it.
+        head = (
+            f"{doc_title or 'A Slack thread'}\n\n"
+            "Turn this thread into a storyboard. It is a conversation, not a document, so:\n"
+            "- Lead with what was DECIDED or LEARNED, not with the order things were said.\n"
+            "- `cite` the message you took each claim from, using its heading verbatim "
+            '(for example "Ananya R, 14:32").\n'
+            "- Ignore side-tracks, pleasantries and anything unresolved.\n"
+            "- Redacted values appear as [entity id], [email] and similar. Never write a "
+            "placeholder into narration or a diagram; talk about it in words instead, or "
+            "leave it out.\n"
+            "- If the thread never reached a conclusion, say what the open question is "
+            "rather than inventing an answer."
+        )
     else:
         head = (
             "Topic (no source document, so omit `cite` and do not state specifics you cannot "

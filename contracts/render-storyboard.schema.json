@@ -1,0 +1,429 @@
+{
+  "$defs": {
+    "BulletsVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "bullets",
+          "title": "Kind",
+          "type": "string"
+        },
+        "bullets": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 4,
+          "minItems": 1,
+          "title": "Bullets",
+          "type": "array"
+        },
+        "heading": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heading"
+        }
+      },
+      "required": [
+        "kind",
+        "bullets"
+      ],
+      "title": "BulletsVisual",
+      "type": "object"
+    },
+    "CodeVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "code",
+          "title": "Kind",
+          "type": "string"
+        },
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        },
+        "heading": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heading"
+        }
+      },
+      "required": [
+        "kind",
+        "code"
+      ],
+      "title": "CodeVisual",
+      "type": "object"
+    },
+    "ComparisonSide": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "icon": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Icon"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "ComparisonSide",
+      "type": "object"
+    },
+    "ComparisonVisual": {
+      "additionalProperties": false,
+      "description": "Two labels and an optional icon each.\n\nDeliberately thin, because the renderer's spec gives it no slot for per-side\nitems. Our internal `compare` scene carries up to four items a side; those have\nnowhere to land here, so the projection records them as a warning instead of\ndropping them quietly. Rule 5 covers before/after architecture with two diagram\nscenes, which is why this stays a light device rather than a content carrier.",
+      "properties": {
+        "kind": {
+          "const": "comparison",
+          "title": "Kind",
+          "type": "string"
+        },
+        "left": {
+          "$ref": "#/$defs/ComparisonSide"
+        },
+        "right": {
+          "$ref": "#/$defs/ComparisonSide"
+        },
+        "heading": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heading"
+        }
+      },
+      "required": [
+        "kind",
+        "left",
+        "right"
+      ],
+      "title": "ComparisonVisual",
+      "type": "object"
+    },
+    "DiagramVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "diagram",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mermaid": {
+          "title": "Mermaid",
+          "type": "string"
+        },
+        "heading": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heading"
+        }
+      },
+      "required": [
+        "kind",
+        "mermaid"
+      ],
+      "title": "DiagramVisual",
+      "type": "object"
+    },
+    "OutroVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "outro",
+          "title": "Kind",
+          "type": "string"
+        },
+        "heading": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heading"
+        },
+        "ctaText": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ctatext"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "OutroVisual",
+      "type": "object"
+    },
+    "RenderScene": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "narration": {
+          "title": "Narration",
+          "type": "string"
+        },
+        "visual": {
+          "discriminator": {
+            "mapping": {
+              "bullets": "#/$defs/BulletsVisual",
+              "code": "#/$defs/CodeVisual",
+              "comparison": "#/$defs/ComparisonVisual",
+              "diagram": "#/$defs/DiagramVisual",
+              "outro": "#/$defs/OutroVisual",
+              "title": "#/$defs/TitleVisual"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TitleVisual"
+            },
+            {
+              "$ref": "#/$defs/DiagramVisual"
+            },
+            {
+              "$ref": "#/$defs/BulletsVisual"
+            },
+            {
+              "$ref": "#/$defs/ComparisonVisual"
+            },
+            {
+              "$ref": "#/$defs/CodeVisual"
+            },
+            {
+              "$ref": "#/$defs/OutroVisual"
+            }
+          ],
+          "title": "Visual"
+        },
+        "onScreenText": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Onscreentext"
+        },
+        "motion": {
+          "anyOf": [
+            {
+              "enum": [
+                "fade",
+                "push_in",
+                "none"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Motion"
+        }
+      },
+      "required": [
+        "id",
+        "narration",
+        "visual"
+      ],
+      "title": "RenderScene",
+      "type": "object"
+    },
+    "RenderStyle": {
+      "additionalProperties": false,
+      "properties": {
+        "aspectRatio": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Aspectratio"
+        },
+        "palette": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Palette"
+        },
+        "fps": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fps"
+        }
+      },
+      "title": "RenderStyle",
+      "type": "object"
+    },
+    "TitleVisual": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "title",
+          "title": "Kind",
+          "type": "string"
+        },
+        "heading": {
+          "title": "Heading",
+          "type": "string"
+        },
+        "subtitle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Subtitle"
+        }
+      },
+      "required": [
+        "kind",
+        "heading"
+      ],
+      "title": "TitleVisual",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "default": "1.0.0",
+      "title": "Schemaversion",
+      "type": "string"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "subtitle": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Subtitle"
+    },
+    "style": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RenderStyle"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "scenes": {
+      "items": {
+        "$ref": "#/$defs/RenderScene"
+      },
+      "maxItems": 6,
+      "minItems": 4,
+      "title": "Scenes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "title",
+    "scenes"
+  ],
+  "title": "RenderStoryboard",
+  "type": "object"
+}
