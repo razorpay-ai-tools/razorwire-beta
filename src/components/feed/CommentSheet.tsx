@@ -66,8 +66,8 @@ export function CommentSheet({
       setComments((current) => [created, ...(current ?? [])]);
       onCountChange(1);
       setText('');
-    } catch {
-      setError('Comment failed to send.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Comment failed to send.');
     } finally {
       setSending(false);
     }
