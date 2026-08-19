@@ -16,17 +16,44 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon } from '@/components/ui';
-import { api, type Post } from '@/lib/api';
+import { api, type FeedPage, type Post } from '@/lib/api';
 import { FeedPost } from './FeedPost';
 import { MuteProvider } from './chrome';
 
 /** Fetch the next page while the reader still has this much feed left below them. */
 const PREFETCH_MARGIN = '900px';
+const FEED_CACHE_KEY = 'razorwire.feed.v1';
+const FEED_REFRESH_MS = 15_000;
 
 type Phase = 'loading' | 'ready' | 'error';
 
 function messageFor(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'Could not reach the feed.';
+}
+
+function readCachedFeed(): FeedPage | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const cached = localStorage.getItem(FEED_CACHE_KEY);
+    if (!cached) return null;
+    const page = JSON.parse(cached) as FeedPage;
+    return Array.isArray(page.items) ? page : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedFeed(page: FeedPage) {
+  try {
+    localStorage.setItem(FEED_CACHE_KEY, JSON.stringify(page));
+  } catch {
+    // Cache is an optimization. Private mode/quota failures should not break feed.
+  }
+}
+
+function mergeFirstPage(current: Post[], fresh: Post[]): Post[] {
+  const ids = new Set(fresh.map((post) => post.id));
+  return [...fresh, ...current.filter((post) => !ids.has(post.id))];
 }
 
 function isTyping(target: EventTarget | null): boolean {
@@ -44,9 +71,10 @@ function Centered({ children }: { children: ReactNode }) {
 }
 
 export function FeedScreen({ aside }: { aside?: ReactNode }) {
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [phase, setPhase] = useState<Phase>('loading');
+  const [cachedPage] = useState<FeedPage | null>(() => readCachedFeed());
+  const [posts, setPosts] = useState<Post[]>(() => cachedPage?.items ?? []);
+  const [cursor, setCursor] = useState<string | null>(() => cachedPage?.nextCursor ?? null);
+  const [phase, setPhase] = useState<Phase>(() => (cachedPage ? 'ready' : 'loading'));
   const [error, setError] = useState<string | null>(null);
   const [paging, setPaging] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -61,30 +89,38 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
   // synchronously in an effect body cascades an extra render.
   useEffect(() => {
     let live = true;
-    inFlight.current = true;
+    const hadCache = Boolean(cachedPage);
 
-    api
-      .feed()
-      .then((page) => {
+    async function refresh(quiet: boolean) {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      try {
+        const page = await api.feed();
         if (!live) return;
-        setPosts(page.items);
+        setPosts((current) => (quiet ? mergeFirstPage(current, page.items) : page.items));
         setCursor(page.nextCursor);
+        writeCachedFeed(page);
         setError(null);
         setPhase('ready');
-      })
-      .catch((cause: unknown) => {
+      } catch (cause: unknown) {
         if (!live) return;
         setError(messageFor(cause));
-        setPhase('error');
-      })
-      .finally(() => {
+        if (!quiet) setPhase('error');
+      } finally {
         inFlight.current = false;
-      });
+      }
+    }
+
+    void refresh(hadCache);
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh(true);
+    }, FEED_REFRESH_MS);
 
     return () => {
       live = false;
+      window.clearInterval(interval);
     };
-  }, [reloadToken]);
+  }, [cachedPage, reloadToken]);
 
   /** Subsequent pages. Only ever called from an observer or a click. */
   const loadMore = useCallback(async (from: string) => {
