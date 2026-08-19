@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     # --- pipeline -------------------------------------------------------------
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.6-flash"
+
+    # --- aidocs ingestion -----------------------------------------------------
+    aidocs_server: str = "https://aidocs.razorpay.com"
+    aidocs_token: str = ""
 
     # --- slack ingestion ------------------------------------------------------
     #: Restored here for the same reason as `work_dir` below: PR #5 added these and

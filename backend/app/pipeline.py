@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
+
+import httpx
 
 from .config import settings
 from .storyboard import (
@@ -119,6 +122,26 @@ def _user_prompt(kind: str, text: str, doc_title: str | None) -> str:
     return f"{head}\n\n---\n{text[:_MAX_SOURCE_CHARS]}\n---"
 
 
+def _with_source(
+    candidate: dict[str, Any],
+    *,
+    kind: str,
+    doc_id: str | None,
+    doc_title: str | None,
+    doc_url: str | None,
+) -> dict[str, Any]:
+    # the pipeline owns these; the source fields are ours to set, not the model's
+    return {
+        **candidate,
+        "source": {
+            "kind": kind,
+            **({"docId": doc_id} if doc_id else {}),
+            **({"url": doc_url} if doc_url else {}),
+            **({"title": doc_title} if doc_title else {}),
+        },
+    }
+
+
 def run_script_stage(
     *,
     kind: str,
@@ -129,12 +152,30 @@ def run_script_stage(
 ) -> Storyboard:
     """Generate and validate a storyboard.
 
-    :raises RuntimeError: if no API key is configured
+    :raises RuntimeError: if no model API key is configured
     :raises StoryboardInvalid: if the model cannot produce a valid storyboard in
         ``MAX_ATTEMPTS`` attempts; carries the final round of errors
     """
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+    if settings.anthropic_api_key:
+        return _run_anthropic_script_stage(
+            kind=kind, text=text, doc_id=doc_id, doc_title=doc_title, doc_url=doc_url
+        )
+    if settings.gemini_api_key:
+        return _run_gemini_script_stage(
+            kind=kind, text=text, doc_id=doc_id, doc_title=doc_title, doc_url=doc_url
+        )
+    raise RuntimeError("set ANTHROPIC_API_KEY or GEMINI_API_KEY")
+
+
+def _run_anthropic_script_stage(
+    *,
+    kind: str,
+    text: str,
+    doc_id: str | None,
+    doc_title: str | None,
+    doc_url: str | None,
+) -> Storyboard:
+    """Anthropic tool-call path. Kept as the preferred provider."""
 
     from anthropic import Anthropic
 
@@ -163,14 +204,9 @@ def run_script_stage(
             messages.append({"role": "user", "content": f"Call the {_TOOL_NAME} tool."})
             continue
 
-        candidate = dict(block.input)
-        # the pipeline owns these; the source fields are ours to set, not the model's
-        candidate["source"] = {
-            "kind": kind,
-            **({"docId": doc_id} if doc_id else {}),
-            **({"url": doc_url} if doc_url else {}),
-            **({"title": doc_title} if doc_title else {}),
-        }
+        candidate = _with_source(
+            dict(block.input), kind=kind, doc_id=doc_id, doc_title=doc_title, doc_url=doc_url
+        )
 
         try:
             return validate_storyboard(candidate, stage="script")
@@ -193,6 +229,83 @@ def run_script_stage(
                         }
                     ],
                 }
+            )
+
+    raise StoryboardInvalid(last_errors)
+
+
+def _gemini_text(body: dict[str, Any]) -> str:
+    parts = body["candidates"][0]["content"]["parts"]
+    return "".join(part.get("text", "") for part in parts)
+
+
+def _run_gemini_script_stage(
+    *,
+    kind: str,
+    text: str,
+    doc_id: str | None,
+    doc_title: str | None,
+    doc_url: str | None,
+) -> Storyboard:
+    """Gemini JSON path. Fallback when Anthropic is not configured."""
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{settings.gemini_model}:generateContent"
+    )
+    schema = json.dumps(tool_input_schema(), separators=(",", ":"))
+    prompt = (
+        _user_prompt(kind, text, doc_title)
+        + "\n\nReturn only a JSON object matching this schema. Do not wrap it in markdown:\n"
+        + schema
+    )
+    last_errors: list[str] = ["model produced no JSON"]
+
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        response = httpx.post(
+            url,
+            params={"key": settings.gemini_api_key},
+            json={
+                "systemInstruction": {"parts": [{"text": _system_prompt()}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                    "maxOutputTokens": 4096,
+                    "temperature": 0.3,
+                },
+            },
+            timeout=180,
+        )
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text.strip()
+            if detail:
+                detail = f": {detail[:500]}"
+            raise RuntimeError(
+                f"Gemini request failed with HTTP {exc.response.status_code}{detail}"
+            ) from None
+
+        try:
+            candidate = _with_source(
+                json.loads(_gemini_text(response.json())),
+                kind=kind,
+                doc_id=doc_id,
+                doc_title=doc_title,
+                doc_url=doc_url,
+            )
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            last_errors = [f"model produced invalid JSON: {exc}"]
+            prompt += "\n\nReturn valid JSON only."
+            continue
+
+        try:
+            return validate_storyboard(candidate, stage="script")
+        except StoryboardInvalid as invalid:
+            last_errors = invalid.errors
+            log.warning("gemini storyboard invalid on attempt %d/%d: %s", attempt, MAX_ATTEMPTS, invalid.errors)
+            prompt += (
+                "\n\nThe storyboard was rejected. Fix every problem and return the full JSON again:\n"
+                + "\n".join(f"- {e}" for e in last_errors)
             )
 
     raise StoryboardInvalid(last_errors)

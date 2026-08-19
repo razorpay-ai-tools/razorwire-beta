@@ -66,13 +66,6 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
     if (!docId) {
       return 'No doc id found. Paste an aidocs link like https://aidocs.razorpay.com/app/d/doc_… or the doc_… id on its own.';
     }
-    /*
-     * The id is the whole requirement. `_run_job` fetches the document itself and only
-     * falls back to this text if that fetch fails, so demanding it here made the primary
-     * path — paste a link, get an explainer — impossible, and the differentiator look like
-     * a copy-paste tool. `test_aidoc_generation_no_longer_requires_pasted_input` pins the
-     * server side of this.
-     */
     const input = docText.trim();
     const trimmedRef = docRef.trim();
     const trimmedTitle = docTitle.trim();

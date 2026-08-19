@@ -4,7 +4,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "uvicorn app.main:app --host 0.0.0.0 --port $PORT",
+    "startCommand": "bash -lc 'if ! command -v aidocs >/dev/null 2>&1; then curl -fsSL https://aidocs.razorpay.com/install.sh | bash; fi; export PATH=\"$HOME/.local/bin:$PATH\"; uvicorn app.main:app --host 0.0.0.0 --port $PORT'",
     "healthcheckPath": "/health"
   }
 }

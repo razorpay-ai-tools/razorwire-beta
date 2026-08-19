@@ -59,6 +59,10 @@ GOOGLE_CLIENT_ID=
 ALLOWED_HD=razorpay.com
 ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=claude-sonnet-5
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.6-flash
+AIDOCS_SERVER=https://aidocs.razorpay.com
+AIDOCS_TOKEN=
 MEDIA_DIR=./.storage
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
@@ -76,6 +80,9 @@ NEXT_PUBLIC_BACKEND_MODE=api
 
 `DEV_AUTH_EMAIL` is the local auth bypass. Unset, the API requires a Google ID
 token restricted to the `razorpay.com` hosted domain.
+
+AI generation uses Anthropic when `ANTHROPIC_API_KEY` is set. If it is empty,
+the backend falls back to Gemini when `GEMINI_API_KEY` is set.
 
 An empty database has an empty feed. Seed sample channels, posts and follows —
 idempotent, so re-running it adds nothing:

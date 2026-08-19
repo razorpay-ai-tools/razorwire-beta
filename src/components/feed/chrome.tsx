@@ -224,9 +224,9 @@ export function accentBackdrop(accent: string): CSSProperties {
 
   return {
     backgroundImage: [
-      `radial-gradient(120% 85% at 18% 10%, color-mix(in oklab, ${colour} 60%, transparent) 0%, transparent 62%)`,
-      `radial-gradient(95% 75% at 88% 92%, color-mix(in oklab, ${colour} 34%, transparent) 0%, transparent 58%)`,
-      'linear-gradient(180deg, var(--color-neutral-900) 0%, var(--color-neutral-950) 100%)',
+      `radial-gradient(120% 85% at 18% 10%, color-mix(in oklab, ${colour} 82%, white 18%) 0%, transparent 64%)`,
+      `radial-gradient(95% 75% at 88% 92%, color-mix(in oklab, ${colour} 68%, #ff4f9a 32%) 0%, transparent 62%)`,
+      'linear-gradient(135deg, #152d63 0%, #32145c 52%, #711d50 100%)',
     ].join(','),
   };
 }
