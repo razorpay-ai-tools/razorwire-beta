@@ -32,6 +32,7 @@ cd backend
 cp ../.env.example .env                      # then fill ANTHROPIC_API_KEY
 echo 'DEV_AUTH_EMAIL=you@razorpay.com' >> .env
 uv sync
+uv run python scripts/seed.py                # sample channels, posts and follows
 uv run uvicorn app.main:app --reload --port 8000
 
 # 2. web app  (http://localhost:3000)
@@ -42,12 +43,20 @@ npm run dev
 `DEV_AUTH_EMAIL` is the local auth bypass. Unset, the API requires a Google ID token
 restricted to the `razorpay.com` hosted domain.
 
+`scripts/seed.py` is idempotent and does not migrate. On a database that predates
+channels, either `rm backend/razorwire.db` or add the two columns in place:
+
+```sql
+ALTER TABLE users ADD COLUMN bio VARCHAR NOT NULL DEFAULT '';
+ALTER TABLE posts ADD COLUMN channel_id VARCHAR;
+```
+
 ## Verify
 
 ```bash
 npm run lint && npx tsc --noEmit && npm run build
 node src/components/scenes/__check.mts     # scene dispatcher + mermaid fallback
-cd backend && uv run pytest -q             # 35 tests
+cd backend && uv run pytest -q             # 43 tests
 ```
 
 ---
