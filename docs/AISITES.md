@@ -6,14 +6,14 @@ process, so keep the backend on a normal app host and point the frontend at it.
 Razorwire supports two frontend backend modes:
 
 - `api` — existing FastAPI backend. This is the default.
-- `aisites` — AiSites DB for feed/profile/channels/social state. Video upload and
-  generation still call FastAPI through `NEXT_PUBLIC_API_URL` when configured.
+- `aisites` — legacy adapter for AiSites DB experiments. Do not use for the shared
+  hosted demo; app data lives in the Railway backend.
 
 ## Deploy frontend
 
 ```bash
-export NEXT_PUBLIC_BACKEND_MODE=aisites
-export NEXT_PUBLIC_API_URL=https://razorwire-api.onrender.com
+export NEXT_PUBLIC_BACKEND_MODE=api
+export NEXT_PUBLIC_API_URL=https://razorwire-api-production.up.railway.app
 npm run build:aisites
 aisites auth login https://aisites.razorpay.com
 aisites deploy razorwire ./out --publish
@@ -38,20 +38,14 @@ SUPABASE_STORAGE_BUCKET=razorwire-videos
 SUPABASE_STORAGE_PUBLIC=true
 ```
 
-## AiSites-only backend path
+## Current hosted data path
 
-The `aisites` adapter already uses:
-
-- posts/comments/likes/saves/views: `/__flash_db__`
-- signed-in user: `/__flash_me__`
-
-Still external/backend-backed:
-
-- video uploads
-- aidocs/Slack ingestion
-- Claude generation/jobs
-
-Those need either FastAPI or a later `/__flash_proxy__` rewrite.
+- AiSites serves the static frontend and provides the signed-in viewer via
+  `/__flash_me__`.
+- The frontend sends that viewer email to Railway as `X-Dev-Email`.
+- Railway handles feed, posts, likes, saves, comments, profiles, channels,
+  uploads, and generation.
+- Supabase Postgres stores app data; Supabase Storage stores video bytes.
 
 ## Test the adapter
 
@@ -59,5 +53,4 @@ Those need either FastAPI or a later `/__flash_proxy__` rewrite.
 npm run check:aisites
 ```
 
-This uses mocked dummy users and asserts that feed, profile, channels, follows,
-likes, saves, comments, views and deletes only call `/__flash_*` endpoints.
+This only covers the legacy AiSites DB adapter.

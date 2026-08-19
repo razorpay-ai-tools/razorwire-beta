@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     #: relative "/media/..." would resolve against the web app and 404. Responses carry
     #: absolute URLs instead, which keeps every client correct without each one having
     #: to know where media lives.
-    public_base_url: str = os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:8000")
+    public_base_url: str = "http://localhost:8000"
 
     # --- auth -----------------------------------------------------------------
     google_client_id: str = ""

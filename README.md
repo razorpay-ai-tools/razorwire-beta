@@ -40,8 +40,7 @@ It creates missing local env files, installs missing dependencies, then starts:
 - backend API: `http://localhost:8000`
 - API docs: `http://localhost:8000/docs`
 
-Requires `node`, `npm`, and Python 3.12. The backend uses modern Python syntax
-and Render is pinned to Python 3.12 in `render.yaml`.
+Requires `node`, `npm`, and Python 3.12. The backend uses modern Python syntax.
 
 First run creates:
 
@@ -93,9 +92,7 @@ For shared video uploads, create the Supabase Storage bucket named in
 `SUPABASE_STORAGE_BUCKET` and set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`.
 
 For AiSites frontend hosting, see [`docs/AISITES.md`](docs/AISITES.md).
-For a public FastAPI backend on Render, see [`docs/RENDER.md`](docs/RENDER.md).
-For a public FastAPI backend on Railway without GitHub repo access, see
-[`docs/RAILWAY.md`](docs/RAILWAY.md).
+For the public FastAPI backend on Railway, see [`docs/RAILWAY.md`](docs/RAILWAY.md).
 
 To prove cross-user consistency after pointing at Supabase:
 

@@ -66,7 +66,7 @@ railway up --detach
 ## Redeploy AiSites frontend against Railway
 
 ```bash
-export NEXT_PUBLIC_BACKEND_MODE=aisites
+export NEXT_PUBLIC_BACKEND_MODE=api
 export NEXT_PUBLIC_API_URL=https://razorwire-api-production.up.railway.app
 npm run build:aisites
 aisites deploy razorwire ./out --publish
