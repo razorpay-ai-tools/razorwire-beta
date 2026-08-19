@@ -12,6 +12,7 @@
 import { useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, FormEvent } from 'react';
 import { api, ApiError } from '@/lib/api';
+import { ChannelSelect } from '@/components/channels/ChannelSelect';
 import { Icon } from '@/components/ui';
 
 /** Same set the backend accepts. */
@@ -65,6 +66,7 @@ export function UploadClipForm({ onPublished }: { onPublished: (postId: string) 
   const [title, setTitle] = useState('');
   const [team, setTeam] = useState('');
   const [category, setCategory] = useState<string>(CATEGORIES[0]);
+  const [channelId, setChannelId] = useState('');
   const [tags, setTags] = useState('');
 
   const [dragging, setDragging] = useState(false);
@@ -133,6 +135,7 @@ export function UploadClipForm({ onPublished }: { onPublished: (postId: string) 
         title: title.trim(),
         team: team.trim(),
         category,
+        ...(channelId ? { channelId } : {}),
         tags: tags
           .split(',')
           .map((tag) => tag.trim())
@@ -280,6 +283,15 @@ export function UploadClipForm({ onPublished }: { onPublished: (postId: string) 
               </option>
             ))}
           </select>
+        </div>
+
+        <div className="sm:col-span-2">
+          <ChannelSelect
+            id="clip-channel"
+            value={channelId}
+            onChange={setChannelId}
+            disabled={busy}
+          />
         </div>
 
         <div className="sm:col-span-2">

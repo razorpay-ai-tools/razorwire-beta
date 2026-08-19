@@ -10,6 +10,7 @@ Docs at: http://localhost:8000/docs
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -35,10 +36,24 @@ from sqlmodel import Session, col, delete, select
 from .aidocs import AidocsUnavailable, fetch_doc
 from .auth import current_user
 from .config import settings
-from .models import Comment, Job, Like, Post, Save, User, get_session, init_db, utcnow
+from .models import (
+    Channel,
+    Comment,
+    Follow,
+    Job,
+    Like,
+    Post,
+    Save,
+    User,
+    get_session,
+    init_db,
+    utcnow,
+)
 from .pipeline import run_script_stage, storyboard_to_json
+from .render_contract import RenderContractInvalid, emit, write_bundle
+from .slack import SlackUnavailable, fetch_thread, parse_permalink
 from .storage import store_upload
-from .storyboard import StoryboardInvalid
+from .storyboard import Storyboard, StoryboardInvalid
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +90,41 @@ class UserOut(_Out):
     email: str
     name: str
     picture: str | None = None
+    bio: str = ""
+
+
+class ProfileUpdate(_Out):
+    """Everything a person may change about themselves. Email comes from the token."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    bio: str | None = Field(default=None, max_length=280)
+
+
+class ChannelRef(_Out):
+    """Just enough channel to render and link a post."""
+
+    id: str
+    slug: str
+    name: str
+
+
+class ChannelOut(ChannelRef):
+    description: str
+    posts: int = 0
+    followers: int = 0
+    following: bool = False
+
+
+class ChannelCreate(_Out):
+    name: str = Field(min_length=2, max_length=60)
+    description: str = Field(default="", max_length=280)
+
+
+class ProfileOut(_Out):
+    user: UserOut
+    posts: int
+    #: channels this person follows
+    channels: list[ChannelOut]
 
 
 class PostCreate(_Out):
@@ -91,6 +141,7 @@ class PostCreate(_Out):
     duration_ms: int | None = None
     storyboard: dict[str, Any] | None = None
     source_doc_id: str | None = None
+    channel_id: str | None = None
 
 
 class CommentOut(_Out):
@@ -118,6 +169,7 @@ class PostOut(_Out):
     views: int
     created_at: datetime
     author: UserOut
+    channel: ChannelRef | None = None
 
     likes: int = 0
     saves: int = 0
@@ -141,13 +193,16 @@ class CommentCreate(_Out):
 
 
 class GenerateRequest(_Out):
-    kind: Literal["aidoc", "topic"] = "topic"
+    kind: Literal["aidoc", "slack", "topic"] = "topic"
     #: The topic, or pasted document text. Optional for kind="aidoc", where the
     #: backend fetches the document itself and only falls back to this if that fails.
     input: str = ""
     doc_id: str | None = None
     doc_title: str | None = None
     doc_url: str | None = None
+    #: Slack message permalink, for kind="slack". A link to any reply works — the
+    #: adapter resolves it to the parent thread.
+    slack_url: str | None = None
 
 
 class JobOut(_Out):
@@ -205,10 +260,29 @@ def _viewer_flags(session: Session, user: User, post_ids: list[str]) -> tuple[se
     return liked, saved
 
 
-def _to_out(post: Post, author: User, counts: dict[str, int], liked: bool, saved: bool) -> PostOut:
+def _absolute_media(url: str | None) -> str | None:
+    """Media is served by this service, so relative paths must be qualified.
+
+    A bare "/media/x.mp4" resolves against whatever origin the client is on -- for the
+    web app that is :3000, where nothing is mounted, so every clip 404'd.
+    """
+    if not url or not url.startswith("/"):
+        return url
+    return f"{settings.public_base_url.rstrip('/')}{url}"
+
+
+def _to_out(
+    post: Post,
+    author: User,
+    counts: dict[str, int],
+    liked: bool,
+    saved: bool,
+    channel: Channel | None,
+) -> PostOut:
     return PostOut(
-        **post.model_dump(),
+        **{**post.model_dump(), "media_url": _absolute_media(post.media_url)},
         author=UserOut.model_validate(author),
+        channel=ChannelRef.model_validate(channel) if channel else None,
         likes=counts["likes"],
         saves=counts["saves"],
         comments=counts["comments"],
@@ -225,8 +299,20 @@ def _hydrate(session: Session, user: User, posts: list[Post]) -> list[PostOut]:
         u.id: u
         for u in session.exec(select(User).where(col(User.id).in_([p.author_id for p in posts]))).all()
     } if posts else {}
+    channel_ids = [p.channel_id for p in posts if p.channel_id]
+    channels = {
+        c.id: c
+        for c in session.exec(select(Channel).where(col(Channel.id).in_(channel_ids))).all()
+    } if channel_ids else {}
     return [
-        _to_out(p, authors[p.author_id], counts[p.id], p.id in liked, p.id in saved)
+        _to_out(
+            p,
+            authors[p.author_id],
+            counts[p.id],
+            p.id in liked,
+            p.id in saved,
+            channels.get(p.channel_id) if p.channel_id else None,
+        )
         for p in posts
     ]
 
@@ -253,6 +339,55 @@ def _toggle(session: Session, model: type[Like] | type[Save], user: User, post_i
     return ToggleOut(active=active, count=count)
 
 
+def _slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _get_channel(session: Session, slug: str) -> Channel:
+    channel = session.exec(select(Channel).where(Channel.slug == slug)).first()
+    if channel is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "channel not found")
+    return channel
+
+
+def _channels_out(session: Session, user: User, channels: list[Channel]) -> list[ChannelOut]:
+    """Batched, like the feed's counters -- a channel list is a feed of channels."""
+    ids = [c.id for c in channels]
+    if not ids:
+        return []
+
+    posts = dict(
+        session.exec(
+            select(Post.channel_id, func.count())
+            .where(col(Post.channel_id).in_(ids))
+            .group_by(col(Post.channel_id))
+        ).all()
+    )
+    followers = dict(
+        session.exec(
+            select(Follow.channel_id, func.count())
+            .where(col(Follow.channel_id).in_(ids))
+            .group_by(col(Follow.channel_id))
+        ).all()
+    )
+    followed = set(
+        session.exec(
+            select(Follow.channel_id).where(
+                Follow.user_id == user.id, col(Follow.channel_id).in_(ids)
+            )
+        ).all()
+    )
+    return [
+        ChannelOut(
+            **c.model_dump(),
+            posts=posts.get(c.id, 0),
+            followers=followers.get(c.id, 0),
+            following=c.id in followed,
+        )
+        for c in channels
+    ]
+
+
 # --------------------------------------------------------------------------- routes
 
 
@@ -266,15 +401,144 @@ def me(user: UserDep) -> User:
     return user
 
 
+@app.patch("/me", response_model=UserOut)
+def update_me(body: ProfileUpdate, session: SessionDep, user: UserDep) -> User:
+    """Name and bio only. Absent fields are left alone, so this is a patch not a put."""
+    if body.name is not None:
+        user.name = body.name.strip()
+    if body.bio is not None:
+        user.bio = body.bio.strip()
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+@app.get("/users/{user_id}", response_model=ProfileOut)
+def profile(user_id: str, session: SessionDep, user: UserDep) -> ProfileOut:
+    """A profile: who they are, how much they have posted, what they follow.
+
+    Their posts are not inlined -- `GET /feed?author=<id>` returns them with the
+    same shape and pagination the feed already has.
+    """
+    subject = session.get(User, user_id)
+    if subject is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+
+    posts = session.exec(
+        select(func.count()).select_from(Post).where(Post.author_id == subject.id)
+    ).one()
+    followed = session.exec(
+        select(Channel)
+        .join(Follow, col(Follow.channel_id) == col(Channel.id))
+        .where(Follow.user_id == subject.id)
+        .order_by(col(Channel.name))
+    ).all()
+    return ProfileOut(
+        user=UserOut.model_validate(subject),
+        posts=posts,
+        channels=_channels_out(session, user, list(followed)),
+    )
+
+
+# --------------------------------------------------------------------------- channels
+
+
+@app.get("/channels", response_model=list[ChannelOut])
+def list_channels(
+    session: SessionDep,
+    user: UserDep,
+    following: bool = Query(default=False, description="only the channels you follow"),
+) -> list[ChannelOut]:
+    statement = select(Channel).order_by(col(Channel.name))
+    if following:
+        statement = statement.join(Follow, col(Follow.channel_id) == col(Channel.id)).where(
+            Follow.user_id == user.id
+        )
+    return _channels_out(session, user, list(session.exec(statement).all()))
+
+
+@app.post("/channels", response_model=ChannelOut, status_code=status.HTTP_201_CREATED)
+def create_channel(body: ChannelCreate, session: SessionDep, user: UserDep) -> ChannelOut:
+    """Anyone can open a channel. The slug is derived from the name and must be free."""
+    slug = _slugify(body.name)
+    if not slug:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "the name needs at least one letter or digit"
+        )
+    if session.exec(select(Channel).where(Channel.slug == slug)).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, f"channel {slug!r} already exists")
+
+    channel = Channel(
+        slug=slug, name=body.name.strip(), description=body.description.strip(), created_by=user.id
+    )
+    session.add(channel)
+    # The creator follows it -- otherwise you open a channel and it is absent from
+    # the one feed you actually read.
+    session.commit()
+    session.refresh(channel)
+    session.add(Follow(user_id=user.id, channel_id=channel.id))
+    session.commit()
+    return _channels_out(session, user, [channel])[0]
+
+
+@app.get("/channels/{slug}", response_model=ChannelOut)
+def get_channel(slug: str, session: SessionDep, user: UserDep) -> ChannelOut:
+    return _channels_out(session, user, [_get_channel(session, slug)])[0]
+
+
+@app.post("/channels/{slug}/follow", response_model=ToggleOut)
+def toggle_follow(slug: str, session: SessionDep, user: UserDep) -> ToggleOut:
+    channel = _get_channel(session, slug)
+    existing = session.exec(
+        select(Follow).where(Follow.user_id == user.id, Follow.channel_id == channel.id)
+    ).first()
+    if existing is None:
+        session.add(Follow(user_id=user.id, channel_id=channel.id))
+        active = True
+    else:
+        session.delete(existing)
+        active = False
+    session.commit()
+    count = session.exec(
+        select(func.count()).select_from(Follow).where(Follow.channel_id == channel.id)
+    ).one()
+    return ToggleOut(active=active, count=count)
+
+
+# --------------------------------------------------------------------------- feed
+
+
 @app.get("/feed", response_model=FeedPage)
 def feed(
     session: SessionDep,
     user: UserDep,
     cursor: str | None = Query(default=None, description="opaque; pass nextCursor from the last page"),
     limit: int = Query(default=10, ge=1, le=50),
+    scope: Literal["all", "following"] = Query(
+        default="all", description="'following' keeps only posts in channels you follow"
+    ),
+    channel: str | None = Query(default=None, description="channel slug"),
+    author: str | None = Query(default=None, description="author user id"),
 ) -> FeedPage:
-    """Newest first, keyset paginated so inserts during scrolling cannot duplicate a row."""
+    """Newest first, keyset paginated so inserts during scrolling cannot duplicate a row.
+
+    The three filters are the same query with an extra WHERE: the home feed, a
+    channel's videos and a profile's posts are one endpoint, not three.
+    """
     statement = select(Post).order_by(col(Post.created_at).desc(), col(Post.id).desc())
+
+    if channel:
+        statement = statement.where(Post.channel_id == _get_channel(session, channel).id)
+    if author:
+        statement = statement.where(Post.author_id == author)
+    if scope == "following":
+        # Empty on purpose when nothing is followed -- a "following" feed that quietly
+        # shows everything is indistinguishable from a broken follow button.
+        statement = statement.where(
+            col(Post.channel_id).in_(select(Follow.channel_id).where(Follow.user_id == user.id))
+        )
+
     if cursor:
         raw_ts, _, cursor_id = cursor.partition("|")
         try:
@@ -304,6 +568,8 @@ def create_post(body: PostCreate, session: SessionDep, user: UserDep) -> PostOut
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "generated posts need a storyboard")
     if body.kind == "clip" and not body.media_url:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "clip posts need a mediaUrl")
+    if body.channel_id and session.get(Channel, body.channel_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "no such channel")
 
     post = Post(author_id=user.id, **body.model_dump())
     session.add(post)
@@ -396,7 +662,14 @@ def upload_media(user: UserDep, file: UploadFile = File(...)) -> UploadOut:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"video must be {mb} MB or smaller")
 
     stored = store_upload(file, user.id, suffix)
-    return UploadOut(media_url=stored.media_url, storage_key=stored.storage_key)
+    # Supabase hands back an absolute URL already; the local-disk fallback hands back
+    # "/media/...", which resolves against the web app's origin and 404s there. One
+    # pass through `_absolute_media` covers both without the caller knowing which
+    # backend stored it.
+    return UploadOut(
+        media_url=_absolute_media(stored.media_url) or stored.media_url,
+        storage_key=stored.storage_key,
+    )
 
 
 # --------------------------------------------------------------------------- pipeline
@@ -425,6 +698,25 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
                     if not body.input.strip():
                         raise RuntimeError(f"could not read {body.doc_id}: {exc}") from exc
 
+            elif body.kind == "slack" and body.slack_url:
+                # No pasted-text fallback here on purpose: text pasted out of Slack has
+                # not been through the scrubber, and a thread is the one source where
+                # that matters most.
+                try:
+                    thread = fetch_thread(body.slack_url)
+                except SlackUnavailable as exc:
+                    raise RuntimeError(f"could not read that thread: {exc}") from exc
+                if not thread.is_structured:
+                    raise RuntimeError(
+                        f"that thread is too thin to explain — {len(thread.sections)} usable "
+                        f"message(s) from {len(thread.participants)} participant(s)"
+                    )
+                text = thread.to_prompt_text()
+                doc_title = doc_title or thread.title
+                doc_url = doc_url or thread.url
+                if thread.redactions:
+                    log.info("job %s: redacted %s before the model", job_id, thread.redactions)
+
             if not text.strip():
                 raise RuntimeError("nothing to generate from")
 
@@ -440,7 +732,23 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
                 doc_url=doc_url,
             )
 
+            # Stored in our INTERNAL shape: the feed's scene components dispatch on
+            # `scene.type` and read `cite`, so this column must never hold the render
+            # contract's `visual.kind` shape. See render_contract.py.
             job.storyboard = storyboard_to_json(storyboard)
+
+            # The handoff. Steps 3 and 4 run on the same box, so the seam is a file on
+            # disk, not an HTTP call to our own API. Written even on the browser-reel
+            # path, so the voice and render stages have something to pick up whenever
+            # they are wired in, and so a bad projection surfaces now rather than later.
+            try:
+                write_bundle(job.id, storyboard)
+            except RenderContractInvalid as invalid:
+                # Not fatal: the browser reel plays from job.storyboard regardless. But
+                # it means this storyboard cannot become an MP4, and silence here would
+                # turn that into a mystery during rendering.
+                log.error("job %s cannot be rendered to MP4: %s", job_id, invalid.errors)
+
             job.state, job.progress = "published", 100
         except StoryboardInvalid as invalid:
             job.state, job.error = "failed", "; ".join(invalid.errors)
@@ -470,6 +778,23 @@ def generate(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "aidoc generation needs a docId")
     if body.kind == "topic" and len(body.input.strip()) < 10:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "topic generation needs input")
+    if body.kind == "slack":
+        if not body.slack_url:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, "slack generation needs a slackUrl"
+            )
+        # Validated here, not in the worker: a bad link or a channel we are not allowed
+        # to read should be a 422 the caller sees, not a job that fails a second later.
+        try:
+            ref = parse_permalink(body.slack_url)
+        except SlackUnavailable as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+        if ref.channel not in settings.slack_allow_list:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                f"{ref.channel} is not in SLACK_ALLOWED_CHANNELS. Ingesting a channel is "
+                "opt-in, because a thread's participants did not write it for the feed.",
+            )
 
     job = Job(requester_id=user.id, source_kind=body.kind, source_input=body.input[:2000])
     session.add(job)
@@ -485,3 +810,45 @@ def get_job(job_id: str, session: SessionDep, user: UserDep) -> Job:
     if job is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
     return job
+
+
+# ------------------------------------------------------------------- render handoff
+
+
+def _render_file(stored: dict[str, Any] | None, what: str) -> dict[str, Any]:
+    """Project a stored internal storyboard onto the renderer's schema.
+
+    Projected on read rather than stored: the renderer's schema is theirs to change,
+    and re-deriving from the internal storyboard costs nothing at feed scale while a
+    stored copy would go stale the moment their version moves.
+    """
+    if not stored:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"{what} has no storyboard")
+    try:
+        payload, _ = emit(Storyboard.model_validate(stored))
+    except (RenderContractInvalid, StoryboardInvalid) as invalid:
+        # Our bug, not the renderer's: something got stored that cannot be projected.
+        log.error("cannot project %s onto the render contract: %s", what, invalid.errors)
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            {"error": "storyboard cannot be rendered", "problems": invalid.errors},
+        ) from invalid
+    return payload
+
+
+@app.get("/posts/{post_id}/storyboard.json")
+def post_render_storyboard(post_id: str, session: SessionDep, user: UserDep) -> dict[str, Any]:
+    """``storyboard.json`` for the renderer. The only thing that crosses the boundary."""
+    post = session.get(Post, post_id)
+    if post is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "post not found")
+    return _render_file(post.storyboard, "post")
+
+
+@app.get("/jobs/{job_id}/storyboard.json")
+def job_render_storyboard(job_id: str, session: SessionDep, user: UserDep) -> dict[str, Any]:
+    """Same file, straight off a finished job, before it is ever posted."""
+    job = session.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "job not found")
+    return _render_file(job.storyboard, "job")

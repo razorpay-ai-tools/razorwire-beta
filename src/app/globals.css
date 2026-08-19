@@ -3,9 +3,9 @@
 /*
  * Razorwire design tokens.
  *
- * Dark only, deliberately. The feed is full-bleed video, so a light theme would
- * only ever apply to the create and inspector screens — two themes for two
- * screens is not worth the cost in a three-day build.
+ * Colours come from Blade, Razorpay's design system, read out of its own token
+ * source rather than eyeballed. Both light and dark are supported, with one
+ * deliberate exception documented below: the video stage is always dark.
  *
  * Corrections against the first design pass, all of which would have failed to
  * render or shipped an inconsistent ramp:
@@ -18,33 +18,115 @@
  *     invent an animation utility from a class name alone.
  */
 @theme {
-  --color-brand-300: #93b4fd;
-  --color-brand-400: #60a5fa;
-  --color-brand-500: #2563eb;
-  --color-brand-600: #1d4ed8;
-  --color-brand-700: #1e40af;
+  /*
+   * Razorpay brand, taken from Blade's own token source
+   * (razorpay/blade → packages/blade/src/tokens/global/colors.ts, chromatic.azure),
+   * converted from HSL. NOT Tailwind blue — we were previously on #2563EB, which is
+   * close but noticeably less saturated than the real brand blue.
+   */
+  --color-brand-50: #f5f9ff;
+  --color-brand-100: #d6e5ff;
+  --color-brand-200: #a8c8ff;
+  --color-brand-300: #75aaff;
+  --color-brand-400: #4287ff;
+  --color-brand-500: #1364f1; /* Blade azure.500 — the primary */
+  --color-brand-600: #0e54cd;
+  --color-brand-700: #0a44a9;
+  --color-brand-800: #073688;
+  --color-brand-900: #052761;
 
-  --color-neutral-50: #f8fafc;
-  --color-neutral-100: #f1f5f9;
-  --color-neutral-200: #dfe5ee;
-  --color-neutral-300: #c3ccdb;
-  --color-neutral-400: #94a3b8;
-  --color-neutral-500: #6b7787;
-  --color-neutral-600: #4a5464;
-  --color-neutral-700: #333a4e;
-  --color-neutral-800: #1e2230;
-  --color-neutral-900: #12141d;
-  --color-neutral-950: #090a0f;
+  /* Blade neutral.blueGrayDark, the dark-theme surface ramp. */
+  --color-neutral-50: #eaebeb;
+  --color-neutral-100: #d5d6d7;
+  --color-neutral-200: #c0c2c4;
+  --color-neutral-300: #aeb0b2;
+  --color-neutral-400: #96999c;
+  --color-neutral-500: #808589;
+  --color-neutral-600: #73787d;
+  --color-neutral-700: #585c5f;
+  --color-neutral-800: #3b3d40;
+  --color-neutral-900: #27292b;
+  --color-neutral-950: #131415;
 
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
+  /* Blade semantic hues: emerald / cider / crimson. */
+  --color-success: #009954;
+  --color-warning: #f56d19;
+  --color-danger: #df3e30;
 
   --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, "SF Mono", Menlo, monospace;
 
   --animate-fade-in: fade-in 220ms ease-out;
   --animate-pulse-ring: pulse-ring 1.6s ease-out infinite;
+
+  /*
+   * Semantic surfaces. THESE are what components should use, not raw neutral steps,
+   * because these are the ones that flip between light and dark. `bg-surface-1`
+   * survives a theme switch; `bg-neutral-900` does not.
+   *
+   * Declared as literals, NOT as `var(--color-surface-0)` indirection. A custom property
+   * is substituted at computed-value time on the element carrying the declaration, so
+   * an alias declared on :root resolves there and inherits as a fixed colour —
+   * redefining the inner variable further down the tree has no effect. That is exactly
+   * why the first version of `stage-dark` failed to darken anything. Overrides below
+   * therefore reassign these names directly.
+   */
+  --color-surface-0: #131415;
+  --color-surface-1: #1f2123;
+  --color-surface-2: #27292b;
+  --color-ink: #eaebeb;
+  --color-ink-muted: #96999c;
+  /*
+   * ink-subtle measures 3.7:1 light / 3.6:1 dark against surface-1, which is UNDER the
+   * 4.5:1 floor for body text. It is for de-emphasised non-essential text only —
+   * timestamps, hints, disabled states — never for anything a reader must be able to
+   * read. Use ink-muted (5.3:1 / 5.6:1) for secondary copy that matters.
+   */
+  --color-ink-subtle: #73787d;
+  --color-hairline: #3b3d40;
+}
+
+/*
+ * Light and dark.
+ *
+ * Dark is the default because the feed is the product and the feed is video. The
+ * theme is chosen by `data-theme` on <html>, falling back to the OS preference when
+ * the reader has not chosen.
+ *
+ * ONE DELIBERATE EXCEPTION: the 9:16 video stage stays dark in BOTH themes. Captions,
+ * citation chips and scene text sit over arbitrary footage, and a light scrim cannot
+ * keep them legible. Only the surrounding chrome — app shell, create sheets, the
+ * inspector, the conversation panel — flips. Instagram and NotebookLM do the same, and
+ * for the same reason.
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  /* Blade neutral.blueGrayLight */
+  --color-surface-0: #f7f7f7;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #dee1e3;
+  --color-ink: #191d1f;
+  --color-ink-muted: #616d75;
+  --color-ink-subtle: #7b878e;
+  --color-hairline: #c8cdd0;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    /* Blade neutral.blueGrayLight */
+    --color-surface-0: #f7f7f7;
+    --color-surface-1: #ffffff;
+    --color-surface-2: #dee1e3;
+    --color-ink: #191d1f;
+    --color-ink-muted: #616d75;
+    --color-ink-subtle: #7b878e;
+    --color-hairline: #c8cdd0;
+    color-scheme: light;
+  }
 }
 
 @keyframes fade-in {
@@ -60,13 +142,13 @@
 
 @keyframes pulse-ring {
   0% {
-    box-shadow: 0 0 0 0 rgb(37 99 235 / 0.5);
+    box-shadow: 0 0 0 0 rgb(19 100 241 / 0.5);
   }
   70% {
-    box-shadow: 0 0 0 10px rgb(37 99 235 / 0);
+    box-shadow: 0 0 0 10px rgb(19 100 241 / 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgb(37 99 235 / 0);
+    box-shadow: 0 0 0 0 rgb(19 100 241 / 0);
   }
 }
 
@@ -75,17 +157,42 @@
 }
 
 html {
-  color-scheme: dark;
-  background: var(--color-neutral-950);
+  background: var(--color-surface-0);
   /* smooth scroll fights scroll-snap on the feed; snap does the animating */
   scroll-behavior: auto;
 }
 
 body {
-  background: var(--color-neutral-950);
-  color: var(--color-neutral-100);
+  background: var(--color-surface-0);
+  color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * The video stage. Always dark, regardless of theme — see the note above. Wrap the
+ * 9:16 player in this and its contents can keep assuming a dark backdrop.
+ */
+@utility stage-dark {
+  --color-surface-0: #131415;
+  --color-surface-1: #1f2123;
+  --color-surface-2: #27292b;
+  --color-ink: #eaebeb;
+  --color-ink-muted: #96999c;
+  --color-ink-subtle: #73787d;
+  --color-hairline: #3b3d40;
+  color-scheme: dark;
+}
+
+/*
+ * Theme-icon swap. Lets ThemeToggle stay stateless: both icons render, CSS picks.
+ * Dark is the default, so the sun ("switch to light") shows unless light is active.
+ */
+:root[data-theme='light'] .theme-icon-sun {
+  display: none;
+}
+:root:not([data-theme='light']) .theme-icon-moon {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -110,28 +217,30 @@ body {
 @utility scrim-light {
   background-image: linear-gradient(
     to bottom,
-    rgb(9 10 15 / 0.75) 0%,
-    rgb(9 10 15 / 0.15) 38%,
-    rgb(9 10 15 / 0.55) 72%,
-    rgb(9 10 15 / 0.92) 100%
+    rgb(19 20 21 / 0.75) 0%,
+    rgb(19 20 21 / 0.15) 38%,
+    rgb(19 20 21 / 0.55) 72%,
+    rgb(19 20 21 / 0.92) 100%
   );
 }
 
 @utility scrim-heavy {
   background-image: linear-gradient(
     to bottom,
-    rgb(9 10 15 / 0.88) 0%,
-    rgb(9 10 15 / 0.72) 35%,
-    rgb(9 10 15 / 0.82) 70%,
-    rgb(9 10 15 / 0.95) 100%
+    rgb(19 20 21 / 0.88) 0%,
+    rgb(19 20 21 / 0.72) 35%,
+    rgb(19 20 21 / 0.82) 70%,
+    rgb(19 20 21 / 0.95) 100%
   );
 }
 
 /* Frosted panel that carries text over moving video. */
 @utility panel {
   border-radius: 1rem;
+  /* Deliberately hard-coded translucent white/dark: panels sit over video, inside
+     stage-dark, so they must not follow the app theme. */
   border: 1px solid rgb(255 255 255 / 0.1);
-  background-color: rgb(18 20 29 / 0.6);
+  background-color: rgb(19 20 21 / 0.62);
   backdrop-filter: blur(12px);
 }
 
@@ -160,10 +269,10 @@ body {
 .input {
   width: 100%;
   border-radius: 0.75rem;
-  border: 1px solid var(--color-neutral-800);
-  background: var(--color-neutral-900);
+  border: 1px solid var(--color-hairline);
+  background: var(--color-surface-1);
   padding: 0.75rem 0.9rem;
-  color: var(--color-neutral-100);
+  color: var(--color-ink);
   font-size: 0.9rem;
   transition:
     border-color 160ms ease,
@@ -177,7 +286,7 @@ body {
 }
 
 .input::placeholder {
-  color: var(--color-neutral-500);
+  color: var(--color-ink-subtle);
 }
 
 /* Visible keyboard focus everywhere. Non-negotiable, not a nice-to-have. */

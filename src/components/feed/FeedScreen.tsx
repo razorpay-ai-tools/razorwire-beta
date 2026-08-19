@@ -14,9 +14,9 @@
  * becoming visible — `snap-mandatory` would refuse to scroll to it.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Icon } from '@/components/ui';
-import { api, type FeedPage, type Post } from '@/lib/api';
+import { api, type FeedFilter, type FeedPage, type Post } from '@/lib/api';
 import { FeedPost } from './FeedPost';
 import { MuteProvider } from './chrome';
 
@@ -31,10 +31,22 @@ function messageFor(cause: unknown): string {
   return cause instanceof Error ? cause.message : 'Could not reach the feed.';
 }
 
-function readCachedFeed(): FeedPage | null {
+/**
+ * One cache entry per slice, not one for the feed.
+ *
+ * The cache is keyed on the filter because "For you", "Following" and a single
+ * channel are different lists behind the same component. A single key would paint
+ * the previous slice's posts under the new slice's heading, which reads as a bug in
+ * follow rather than as a stale cache.
+ */
+function cacheKeyFor(filterKey: string): string {
+  return `${FEED_CACHE_KEY}:${filterKey}`;
+}
+
+function readCachedFeed(key: string): FeedPage | null {
   if (typeof window === 'undefined') return null;
   try {
-    const cached = localStorage.getItem(FEED_CACHE_KEY);
+    const cached = localStorage.getItem(key);
     if (!cached) return null;
     const page = JSON.parse(cached) as FeedPage;
     return Array.isArray(page.items) ? page : null;
@@ -43,9 +55,9 @@ function readCachedFeed(): FeedPage | null {
   }
 }
 
-function writeCachedFeed(page: FeedPage) {
+function writeCachedFeed(key: string, page: FeedPage) {
   try {
-    localStorage.setItem(FEED_CACHE_KEY, JSON.stringify(page));
+    localStorage.setItem(key, JSON.stringify(page));
   } catch {
     // Cache is an optimization. Private mode/quota failures should not break feed.
   }
@@ -64,17 +76,31 @@ function isTyping(target: EventTarget | null): boolean {
 
 function Centered({ children }: { children: ReactNode }) {
   return (
-    <div className="grid h-dvh w-full place-items-center bg-neutral-950 px-6">
+    <div className="grid h-dvh w-full place-items-center bg-surface-0 px-6">
       <div className="max-w-xs text-center">{children}</div>
     </div>
   );
 }
 
-export function FeedScreen({ aside }: { aside?: ReactNode }) {
-  const [cachedPage] = useState<FeedPage | null>(() => readCachedFeed());
-  const [posts, setPosts] = useState<Post[]>(() => cachedPage?.items ?? []);
-  const [cursor, setCursor] = useState<string | null>(() => cachedPage?.nextCursor ?? null);
-  const [phase, setPhase] = useState<Phase>(() => (cachedPage ? 'ready' : 'loading'));
+interface FeedScreenProps {
+  aside?: ReactNode;
+  /** Which slice to read. Changing it refetches from page one. */
+  filter?: FeedFilter;
+  /** Shown instead of the stock copy when the slice is empty. */
+  emptyNote?: ReactNode;
+}
+
+export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
+  // Callers pass an object literal, so its identity changes every render. Key the
+  // fetches on the values instead, or the feed refetches forever.
+  const filterKey = JSON.stringify(filter ?? {});
+  const activeFilter = useMemo(() => JSON.parse(filterKey) as FeedFilter, [filterKey]);
+  const cacheKey = cacheKeyFor(filterKey);
+
+  const [initialPage] = useState<FeedPage | null>(() => readCachedFeed(cacheKeyFor(filterKey)));
+  const [posts, setPosts] = useState<Post[]>(() => initialPage?.items ?? []);
+  const [cursor, setCursor] = useState<string | null>(() => initialPage?.nextCursor ?? null);
+  const [phase, setPhase] = useState<Phase>(() => (initialPage ? 'ready' : 'loading'));
   const [error, setError] = useState<string | null>(null);
   const [paging, setPaging] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -85,21 +111,37 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
   const viewed = useRef(new Set<string>());
   const inFlight = useRef(false);
 
+  // A different slice means everything on screen belongs to the previous one. Reset
+  // during render rather than in an effect, which would paint the stale posts once.
+  // Seeded from that slice's own cache, so switching tabs is instant the second time.
+  const [trackedFilter, setTrackedFilter] = useState(filterKey);
+  if (trackedFilter !== filterKey) {
+    const cached = readCachedFeed(cacheKey);
+    setTrackedFilter(filterKey);
+    setPosts(cached?.items ?? []);
+    setCursor(cached?.nextCursor ?? null);
+    setActiveIndex(0);
+    setError(null);
+    setPhase(cached ? 'ready' : 'loading');
+  }
+
   // First page. State only ever changes in the promise callbacks — updating it
   // synchronously in an effect body cascades an extra render.
   useEffect(() => {
     let live = true;
-    const hadCache = Boolean(cachedPage);
+    // Quiet only when this slice already has something on screen. A first visit to a
+    // channel must be able to show its loading and error states.
+    const hadCache = readCachedFeed(cacheKey) !== null;
 
     async function refresh(quiet: boolean) {
       if (inFlight.current) return;
       inFlight.current = true;
       try {
-        const page = await api.feed();
+        const page = await api.feed(null, activeFilter);
         if (!live) return;
         setPosts((current) => (quiet ? mergeFirstPage(current, page.items) : page.items));
         setCursor(page.nextCursor);
-        writeCachedFeed(page);
+        writeCachedFeed(cacheKey, page);
         setError(null);
         setPhase('ready');
       } catch (cause: unknown) {
@@ -120,30 +162,43 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
       live = false;
       window.clearInterval(interval);
     };
-  }, [cachedPage, reloadToken]);
+  }, [reloadToken, activeFilter, cacheKey]);
 
-  /** Subsequent pages. Only ever called from an observer or a click. */
-  const loadMore = useCallback(async (from: string) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setPaging(true);
+  /**
+   * Subsequent pages. Only ever called from an observer or a click.
+   *
+   * The setters are in the dep list on purpose. It has to be memoized, because the
+   * paging effect below takes it as a dependency and would re-subscribe its observer
+   * on every render otherwise. But once this closed over `activeFilter`, the React
+   * Compiler refused to preserve a `[activeFilter]` memoization — the deps it infers
+   * include the setters — and skipped optimizing the whole component. `useState`
+   * setters are stable for the life of the component, so naming them changes nothing
+   * at runtime and satisfies both rules.
+   */
+  const loadMore = useCallback(
+    async (from: string) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      setPaging(true);
 
-    try {
-      const page = await api.feed(from);
-      setPosts((current) => {
-        // StrictMode double-invokes effects in dev; de-dupe rather than show doubles.
-        const seen = new Set(current.map((post) => post.id));
-        return [...current, ...page.items.filter((post) => !seen.has(post.id))];
-      });
-      setCursor(page.nextCursor);
-      setError(null);
-    } catch (cause) {
-      setError(messageFor(cause));
-    } finally {
-      inFlight.current = false;
-      setPaging(false);
-    }
-  }, []);
+      try {
+        const page = await api.feed(from, activeFilter);
+        setPosts((current) => {
+          // StrictMode double-invokes effects in dev; de-dupe rather than show doubles.
+          const seen = new Set(current.map((post) => post.id));
+          return [...current, ...page.items.filter((post) => !seen.has(post.id))];
+        });
+        setCursor(page.nextCursor);
+        setError(null);
+      } catch (cause) {
+        setError(messageFor(cause));
+      } finally {
+        inFlight.current = false;
+        setPaging(false);
+      }
+    },
+    [activeFilter, setPaging, setPosts, setCursor, setError],
+  );
 
   // Which post is active. 60% visible is past the point where snap has committed.
   useEffect(() => {
@@ -215,9 +270,9 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
       <Centered>
         <div
           aria-hidden
-          className="mx-auto size-12 animate-pulse rounded-2xl border border-neutral-800 bg-neutral-900"
+          className="mx-auto size-12 animate-pulse rounded-2xl border border-hairline bg-surface-2"
         />
-        <p role="status" className="mt-4 text-sm text-neutral-400">
+        <p role="status" className="mt-4 text-sm text-ink-muted">
           Loading the feed…
         </p>
       </Centered>
@@ -226,8 +281,8 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
     body = (
       <Centered>
         <Icon name="alert" label={null} className="mx-auto size-7 text-warning" />
-        <h2 className="mt-3 text-base font-semibold text-white">The feed did not load</h2>
-        <p className="mt-1.5 text-sm text-neutral-400">{error}</p>
+        <h2 className="mt-3 text-base font-semibold text-ink">The feed did not load</h2>
+        <p className="mt-1.5 text-sm text-ink-muted">{error}</p>
         <button
           type="button"
           onClick={() => {
@@ -245,9 +300,9 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
     body = (
       <Centered>
         <Icon name="sparkle" label={null} className="mx-auto size-7 text-brand-300" />
-        <h2 className="mt-3 text-base font-semibold text-white">Nothing here yet</h2>
-        <p className="mt-1.5 text-sm text-neutral-400">
-          Post a clip, or turn a spec into an explainer, and it lands here.
+        <h2 className="mt-3 text-base font-semibold text-ink">Nothing here yet</h2>
+        <p className="mt-1.5 text-sm text-ink-muted">
+          {emptyNote ?? 'Post a clip, or turn a spec into an explainer, and it lands here.'}
         </p>
       </Centered>
     );
@@ -268,11 +323,21 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
 
   return (
     <MuteProvider>
-      <div className="flex h-dvh w-full justify-center bg-neutral-950 md:gap-6 md:px-6">
-        <div className="relative h-dvh w-full md:max-w-md">
+      {/* lg:px-0 — from lg the post is a self-bounding card that centres its own player
+          against the viewport, so outer padding here would shift it off the centre line. */}
+      <div className="flex h-dvh w-full justify-center bg-surface-0 md:gap-6 md:px-6 lg:px-0">
+        {/*
+         * The 9:16 frame up to md. At lg the post itself becomes a split card that owns
+         * its own frame, so the column goes full width and the outer ring comes off rather
+         * than drawing a second border around the card's.
+         *
+         * `lg:max-w-none` matters: a max width here was capping the row the card centres
+         * itself in, which pulled the player 72px left of the viewport's centre line.
+         */}
+        <div className="relative h-dvh w-full md:max-w-md lg:max-w-none">
           <div
             ref={scrollRef}
-            className="h-dvh w-full snap-y snap-mandatory overflow-y-scroll overscroll-y-contain bg-neutral-950 md:rounded-2xl md:ring-1 md:ring-neutral-800"
+            className="h-dvh w-full snap-y snap-mandatory overflow-y-scroll overscroll-y-contain bg-surface-0 md:rounded-2xl md:ring-1 md:ring-hairline lg:rounded-none lg:ring-0"
           >
             {body}
           </div>
@@ -303,10 +368,16 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
           ) : null}
         </div>
 
-        {/* Reserved for the inspector panel. Owned elsewhere; this is only the slot. */}
-        <div className="hidden shrink-0 self-stretch overflow-y-auto py-6 md:block md:w-72 lg:w-80">
-          {aside}
-        </div>
+        {/*
+         * Optional side slot. Rendered only when something is passed: from lg the audit
+         * trail lives inside the post's own card, so an always-present empty column would
+         * just take 320px away from it.
+         */}
+        {aside ? (
+          <div className="hidden shrink-0 self-stretch overflow-y-auto py-6 md:block md:w-72 lg:w-80">
+            {aside}
+          </div>
+        ) : null}
       </div>
     </MuteProvider>
   );

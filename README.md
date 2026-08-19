@@ -78,6 +78,14 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 `DEV_AUTH_EMAIL` is the local auth bypass. Unset, the API requires a Google ID
 token restricted to the `razorpay.com` hosted domain.
 
+An empty database has an empty feed. Seed sample channels, posts and follows —
+idempotent, so re-running it adds nothing:
+
+```bash
+cd backend
+.venv/bin/python scripts/seed.py
+```
+
 For shared state, replace the default SQLite `DATABASE_URL` with a hosted Postgres URL
 from Supabase or Neon. See [`docs/STORAGE.md`](docs/STORAGE.md).
 
@@ -91,12 +99,20 @@ cd backend
 .venv/bin/python scripts/check_shared_storage.py
 ```
 
+`scripts/seed.py` is idempotent and does not migrate. On a database that predates
+channels, either `rm backend/razorwire.db` or add the two columns in place:
+
+```sql
+ALTER TABLE users ADD COLUMN bio VARCHAR NOT NULL DEFAULT '';
+ALTER TABLE posts ADD COLUMN channel_id VARCHAR;
+```
+
 ## Verify
 
 ```bash
 npm run lint && npx tsc --noEmit && npm run build
 node src/components/scenes/__check.mts     # scene dispatcher + mermaid fallback
-cd backend && uv run pytest -q             # 113 tests
+cd backend && uv run pytest -q             # 123 tests
 ```
 
 ---
@@ -225,9 +241,10 @@ backend/
   app/slack.py            fetch a thread, normalise to citable sections, scrubbed
   app/scrub.py            PII and secret redaction at the ingestion boundary
   app/pipeline.py         Claude script stage; validation errors fed back for self-repair
-  app/main.py             feed, posts, likes, saves, comments, views, uploads, jobs
-  app/models.py           six DB tables; reaction counts derived, never denormalised
-  tests/                  113 tests — api, render contract, ingestion
+  app/main.py             feed, channels, profiles, posts, reactions, uploads, jobs
+  app/models.py           eight DB tables; reaction counts derived, never denormalised
+  scripts/seed.py         sample channels, posts and follows for an empty database
+  tests/                  123 tests — api, render contract, ingestion
 src/
   app/page.tsx         app shell — feed is the default view, create is a sheet over it
   components/feed/     THE FOCUS SCREEN — snap feed, both post variants
@@ -265,8 +282,8 @@ that failed to load.
   bearer token over HTTP; the CLI already takes `--server` and `--token`.
 - **No consent flow.** Slack contributors are captured and attributed, but nobody is
   notified their words became a post and there is no takedown.
-- **No Veo clip library yet.** `brollSrc` points at `/broll/<mood>.mp4`; missing files
-  fall back to an accent gradient — the designed path, but it does log 404s.
+- **No Veo clip library yet.** `brollSrc` only requests a clip once the resolver has
+  assigned a `clipId`, so scenes fall back to an accent gradient with no failed request.
 - **MP4 export unbuilt**, so the `voicing` and `rendering` job states never fire.
   `_run_job` goes straight to `published`, which is right for the browser reel and wrong
   once step 4 lands. `storyboard.json` is already on disk waiting for it.
@@ -274,6 +291,14 @@ that failed to load.
   only `page.tsx`.
 - **Uploads go to local disk** through the app. Fine for one box; presign beyond that.
 - **No migrations.** Fresh DBs use `create_all`; add Alembic after the schema stabilises.
+  On a SQLite file that predates channels, either `rm backend/razorwire.db` or add the
+  two columns in place:
+  ```sql
+  ALTER TABLE users ADD COLUMN bio VARCHAR NOT NULL DEFAULT '';
+  ALTER TABLE posts ADD COLUMN channel_id VARCHAR;
+  ```
+- **`ink-subtle` is 3.7:1** against surface-1, under the floor for body text. It is for
+  timestamps, hints and disabled states only — use `ink-muted` for secondary copy.
 - **Diagram legibility at 360px**: a 7-node vertical graph letterboxes to roughly 11px
   labels. Check on a real phone before trusting it; the node cap is what keeps it this
   side of readable.

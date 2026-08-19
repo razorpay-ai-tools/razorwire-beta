@@ -18,28 +18,33 @@ import type { DiagramScene as DiagramSceneData } from '@/lib/storyboard.types';
 import { parseMermaidNodes } from './mermaid-nodes';
 import { SceneShell, TEXT_SHADOW } from './SceneShell';
 
-/** Matches globals.css. mermaid inlines these into the SVG, so tokens must be literal. */
+/**
+ * Matches globals.css. mermaid inlines these into the SVG, so the tokens must be
+ * literal hex — a `var(--color-brand-500)` here would not resolve inside the
+ * generated markup. Values are Blade's azure.500 and blueGrayDark, so they must be
+ * updated together with the @theme block.
+ */
 const THEME_VARIABLES = {
   fontFamily: 'var(--font-mono)',
   fontSize: '14px',
   background: 'transparent',
-  primaryColor: '#12141d',
-  primaryBorderColor: '#2563eb',
-  primaryTextColor: '#f1f5f9',
-  secondaryColor: '#12141d',
-  secondaryBorderColor: '#2563eb',
-  secondaryTextColor: '#f1f5f9',
-  tertiaryColor: '#12141d',
-  tertiaryBorderColor: '#2563eb',
-  tertiaryTextColor: '#f1f5f9',
-  mainBkg: '#12141d',
-  nodeBorder: '#2563eb',
-  nodeTextColor: '#f1f5f9',
-  lineColor: '#2563eb',
-  textColor: '#f1f5f9',
-  edgeLabelBackground: '#090a0f',
+  primaryColor: '#1f2123',
+  primaryBorderColor: '#1364f1',
+  primaryTextColor: '#eaebeb',
+  secondaryColor: '#1f2123',
+  secondaryBorderColor: '#1364f1',
+  secondaryTextColor: '#eaebeb',
+  tertiaryColor: '#1f2123',
+  tertiaryBorderColor: '#1364f1',
+  tertiaryTextColor: '#eaebeb',
+  mainBkg: '#1f2123',
+  nodeBorder: '#1364f1',
+  nodeTextColor: '#eaebeb',
+  lineColor: '#1364f1',
+  textColor: '#eaebeb',
+  edgeLabelBackground: '#131415',
   clusterBkg: 'transparent',
-  clusterBorder: '#333a4e',
+  clusterBorder: '#3b3d40',
 };
 
 /** mermaid requires a DOM-unique id per render call. */

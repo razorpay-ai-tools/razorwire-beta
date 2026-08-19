@@ -16,6 +16,7 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { api, type GenerateRequest, type Job } from '@/lib/api';
 import { sampleAidoc, sampleAidocTitle } from '@/lib/sample-doc';
+import { ChannelSelect } from '@/components/channels/ChannelSelect';
 import { Icon } from '@/components/ui';
 import { PipelineStepper } from './PipelineStepper';
 
@@ -43,6 +44,8 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
   const [docTitle, setDocTitle] = useState('');
   const [docText, setDocText] = useState('');
   const [topic, setTopic] = useState('');
+  // Chosen before generation, applied when the finished storyboard becomes a post.
+  const [channelId, setChannelId] = useState('');
 
   const [request, setRequest] = useState<GenerateRequest | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -119,7 +122,13 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
   if (jobId) {
     return (
       <div className="space-y-3">
-        <PipelineStepper key={jobId} jobId={jobId} onDone={handleDone} onRetry={handleRetry} />
+        <PipelineStepper
+          key={jobId}
+          jobId={jobId}
+          onDone={handleDone}
+          onRetry={handleRetry}
+          {...(channelId ? { channelId } : {})}
+        />
         <button
           type="button"
           onClick={() => {
@@ -267,6 +276,13 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
           </p>
         </div>
       )}
+
+      <ChannelSelect
+        id="generate-channel"
+        value={channelId}
+        onChange={setChannelId}
+        disabled={submitting}
+      />
 
       {error ? (
         <p
