@@ -10,6 +10,7 @@ Docs at: http://localhost:8000/docs
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -36,7 +37,19 @@ from sqlmodel import Session, col, delete, select
 from .aidocs import AidocsUnavailable, fetch_doc
 from .auth import current_user
 from .config import settings
-from .models import Comment, Job, Like, Post, Save, User, get_session, init_db, utcnow
+from .models import (
+    Channel,
+    Comment,
+    Follow,
+    Job,
+    Like,
+    Post,
+    Save,
+    User,
+    get_session,
+    init_db,
+    utcnow,
+)
 from .pipeline import run_script_stage, storyboard_to_json
 from .storyboard import StoryboardInvalid
 
@@ -76,6 +89,41 @@ class UserOut(_Out):
     email: str
     name: str
     picture: str | None = None
+    bio: str = ""
+
+
+class ProfileUpdate(_Out):
+    """Everything a person may change about themselves. Email comes from the token."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    bio: str | None = Field(default=None, max_length=280)
+
+
+class ChannelRef(_Out):
+    """Just enough channel to render and link a post."""
+
+    id: str
+    slug: str
+    name: str
+
+
+class ChannelOut(ChannelRef):
+    description: str
+    posts: int = 0
+    followers: int = 0
+    following: bool = False
+
+
+class ChannelCreate(_Out):
+    name: str = Field(min_length=2, max_length=60)
+    description: str = Field(default="", max_length=280)
+
+
+class ProfileOut(_Out):
+    user: UserOut
+    posts: int
+    #: channels this person follows
+    channels: list[ChannelOut]
 
 
 class PostCreate(_Out):
@@ -90,6 +138,7 @@ class PostCreate(_Out):
     duration_ms: int | None = None
     storyboard: dict[str, Any] | None = None
     source_doc_id: str | None = None
+    channel_id: str | None = None
 
 
 class CommentOut(_Out):
@@ -115,6 +164,7 @@ class PostOut(_Out):
     views: int
     created_at: datetime
     author: UserOut
+    channel: ChannelRef | None = None
 
     likes: int = 0
     saves: int = 0
@@ -212,10 +262,18 @@ def _absolute_media(url: str | None) -> str | None:
     return f"{settings.public_base_url.rstrip('/')}{url}"
 
 
-def _to_out(post: Post, author: User, counts: dict[str, int], liked: bool, saved: bool) -> PostOut:
+def _to_out(
+    post: Post,
+    author: User,
+    counts: dict[str, int],
+    liked: bool,
+    saved: bool,
+    channel: Channel | None,
+) -> PostOut:
     return PostOut(
         **{**post.model_dump(), "media_url": _absolute_media(post.media_url)},
         author=UserOut.model_validate(author),
+        channel=ChannelRef.model_validate(channel) if channel else None,
         likes=counts["likes"],
         saves=counts["saves"],
         comments=counts["comments"],
@@ -232,8 +290,20 @@ def _hydrate(session: Session, user: User, posts: list[Post]) -> list[PostOut]:
         u.id: u
         for u in session.exec(select(User).where(col(User.id).in_([p.author_id for p in posts]))).all()
     } if posts else {}
+    channel_ids = [p.channel_id for p in posts if p.channel_id]
+    channels = {
+        c.id: c
+        for c in session.exec(select(Channel).where(col(Channel.id).in_(channel_ids))).all()
+    } if channel_ids else {}
     return [
-        _to_out(p, authors[p.author_id], counts[p.id], p.id in liked, p.id in saved)
+        _to_out(
+            p,
+            authors[p.author_id],
+            counts[p.id],
+            p.id in liked,
+            p.id in saved,
+            channels.get(p.channel_id) if p.channel_id else None,
+        )
         for p in posts
     ]
 
@@ -260,6 +330,55 @@ def _toggle(session: Session, model: type[Like] | type[Save], user: User, post_i
     return ToggleOut(active=active, count=count)
 
 
+def _slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _get_channel(session: Session, slug: str) -> Channel:
+    channel = session.exec(select(Channel).where(Channel.slug == slug)).first()
+    if channel is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "channel not found")
+    return channel
+
+
+def _channels_out(session: Session, user: User, channels: list[Channel]) -> list[ChannelOut]:
+    """Batched, like the feed's counters -- a channel list is a feed of channels."""
+    ids = [c.id for c in channels]
+    if not ids:
+        return []
+
+    posts = dict(
+        session.exec(
+            select(Post.channel_id, func.count())
+            .where(col(Post.channel_id).in_(ids))
+            .group_by(col(Post.channel_id))
+        ).all()
+    )
+    followers = dict(
+        session.exec(
+            select(Follow.channel_id, func.count())
+            .where(col(Follow.channel_id).in_(ids))
+            .group_by(col(Follow.channel_id))
+        ).all()
+    )
+    followed = set(
+        session.exec(
+            select(Follow.channel_id).where(
+                Follow.user_id == user.id, col(Follow.channel_id).in_(ids)
+            )
+        ).all()
+    )
+    return [
+        ChannelOut(
+            **c.model_dump(),
+            posts=posts.get(c.id, 0),
+            followers=followers.get(c.id, 0),
+            following=c.id in followed,
+        )
+        for c in channels
+    ]
+
+
 # --------------------------------------------------------------------------- routes
 
 
@@ -273,15 +392,144 @@ def me(user: UserDep) -> User:
     return user
 
 
+@app.patch("/me", response_model=UserOut)
+def update_me(body: ProfileUpdate, session: SessionDep, user: UserDep) -> User:
+    """Name and bio only. Absent fields are left alone, so this is a patch not a put."""
+    if body.name is not None:
+        user.name = body.name.strip()
+    if body.bio is not None:
+        user.bio = body.bio.strip()
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
+
+
+@app.get("/users/{user_id}", response_model=ProfileOut)
+def profile(user_id: str, session: SessionDep, user: UserDep) -> ProfileOut:
+    """A profile: who they are, how much they have posted, what they follow.
+
+    Their posts are not inlined -- `GET /feed?author=<id>` returns them with the
+    same shape and pagination the feed already has.
+    """
+    subject = session.get(User, user_id)
+    if subject is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+
+    posts = session.exec(
+        select(func.count()).select_from(Post).where(Post.author_id == subject.id)
+    ).one()
+    followed = session.exec(
+        select(Channel)
+        .join(Follow, col(Follow.channel_id) == col(Channel.id))
+        .where(Follow.user_id == subject.id)
+        .order_by(col(Channel.name))
+    ).all()
+    return ProfileOut(
+        user=UserOut.model_validate(subject),
+        posts=posts,
+        channels=_channels_out(session, user, list(followed)),
+    )
+
+
+# --------------------------------------------------------------------------- channels
+
+
+@app.get("/channels", response_model=list[ChannelOut])
+def list_channels(
+    session: SessionDep,
+    user: UserDep,
+    following: bool = Query(default=False, description="only the channels you follow"),
+) -> list[ChannelOut]:
+    statement = select(Channel).order_by(col(Channel.name))
+    if following:
+        statement = statement.join(Follow, col(Follow.channel_id) == col(Channel.id)).where(
+            Follow.user_id == user.id
+        )
+    return _channels_out(session, user, list(session.exec(statement).all()))
+
+
+@app.post("/channels", response_model=ChannelOut, status_code=status.HTTP_201_CREATED)
+def create_channel(body: ChannelCreate, session: SessionDep, user: UserDep) -> ChannelOut:
+    """Anyone can open a channel. The slug is derived from the name and must be free."""
+    slug = _slugify(body.name)
+    if not slug:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "the name needs at least one letter or digit"
+        )
+    if session.exec(select(Channel).where(Channel.slug == slug)).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, f"channel {slug!r} already exists")
+
+    channel = Channel(
+        slug=slug, name=body.name.strip(), description=body.description.strip(), created_by=user.id
+    )
+    session.add(channel)
+    # The creator follows it -- otherwise you open a channel and it is absent from
+    # the one feed you actually read.
+    session.commit()
+    session.refresh(channel)
+    session.add(Follow(user_id=user.id, channel_id=channel.id))
+    session.commit()
+    return _channels_out(session, user, [channel])[0]
+
+
+@app.get("/channels/{slug}", response_model=ChannelOut)
+def get_channel(slug: str, session: SessionDep, user: UserDep) -> ChannelOut:
+    return _channels_out(session, user, [_get_channel(session, slug)])[0]
+
+
+@app.post("/channels/{slug}/follow", response_model=ToggleOut)
+def toggle_follow(slug: str, session: SessionDep, user: UserDep) -> ToggleOut:
+    channel = _get_channel(session, slug)
+    existing = session.exec(
+        select(Follow).where(Follow.user_id == user.id, Follow.channel_id == channel.id)
+    ).first()
+    if existing is None:
+        session.add(Follow(user_id=user.id, channel_id=channel.id))
+        active = True
+    else:
+        session.delete(existing)
+        active = False
+    session.commit()
+    count = session.exec(
+        select(func.count()).select_from(Follow).where(Follow.channel_id == channel.id)
+    ).one()
+    return ToggleOut(active=active, count=count)
+
+
+# --------------------------------------------------------------------------- feed
+
+
 @app.get("/feed", response_model=FeedPage)
 def feed(
     session: SessionDep,
     user: UserDep,
     cursor: str | None = Query(default=None, description="opaque; pass nextCursor from the last page"),
     limit: int = Query(default=10, ge=1, le=50),
+    scope: Literal["all", "following"] = Query(
+        default="all", description="'following' keeps only posts in channels you follow"
+    ),
+    channel: str | None = Query(default=None, description="channel slug"),
+    author: str | None = Query(default=None, description="author user id"),
 ) -> FeedPage:
-    """Newest first, keyset paginated so inserts during scrolling cannot duplicate a row."""
+    """Newest first, keyset paginated so inserts during scrolling cannot duplicate a row.
+
+    The three filters are the same query with an extra WHERE: the home feed, a
+    channel's videos and a profile's posts are one endpoint, not three.
+    """
     statement = select(Post).order_by(col(Post.created_at).desc(), col(Post.id).desc())
+
+    if channel:
+        statement = statement.where(Post.channel_id == _get_channel(session, channel).id)
+    if author:
+        statement = statement.where(Post.author_id == author)
+    if scope == "following":
+        # Empty on purpose when nothing is followed -- a "following" feed that quietly
+        # shows everything is indistinguishable from a broken follow button.
+        statement = statement.where(
+            col(Post.channel_id).in_(select(Follow.channel_id).where(Follow.user_id == user.id))
+        )
+
     if cursor:
         raw_ts, _, cursor_id = cursor.partition("|")
         try:
@@ -311,6 +559,8 @@ def create_post(body: PostCreate, session: SessionDep, user: UserDep) -> PostOut
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "generated posts need a storyboard")
     if body.kind == "clip" and not body.media_url:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "clip posts need a mediaUrl")
+    if body.channel_id and session.get(Channel, body.channel_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "no such channel")
 
     post = Post(author_id=user.id, **body.model_dump())
     session.add(post)

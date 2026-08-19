@@ -2,76 +2,231 @@
 
 /**
  * The app shell. The feed is the product, so it is the default view and it owns the
- * whole viewport; creating is a sheet over it rather than a separate page.
+ * whole viewport; creating, channels and profiles are sheets over it rather than
+ * separate pages.
  *
- * Deliberately one route. A three-day build does not need router state for two
+ * Deliberately one route. A three-day build does not need router state for four
  * sheets, and `h-dvh` snap scrolling survives fewer layout ancestors.
+ *
+ * `view` is a feed filter, not a page: For you, Following, one channel and one
+ * person's videos are the same screen with a different WHERE — see `GET /feed`.
  */
 
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { ChannelsPanel } from '@/components/channels/ChannelsPanel';
 import { GeneratePanel } from '@/components/create/GeneratePanel';
 import { UploadClipForm } from '@/components/create/UploadClipForm';
 import { FeedScreen } from '@/components/feed/FeedScreen';
+import { ProfilePanel } from '@/components/profile/ProfilePanel';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Icon } from '@/components/ui';
+import { api, type ApiUser, type FeedFilter } from '@/lib/api';
 
-type Sheet = 'none' | 'generate' | 'upload';
+type Sheet = 'none' | 'generate' | 'upload' | 'channels' | 'profile';
+
+type View =
+  | { kind: 'all' }
+  | { kind: 'following' }
+  | { kind: 'channel'; slug: string }
+  | { kind: 'author'; id: string };
+
+const SHEET_TITLE: Record<Exclude<Sheet, 'none'>, string> = {
+  generate: 'Generate from a spec',
+  upload: 'Upload a clip',
+  channels: 'Channels',
+  profile: 'Profile',
+};
+
+function filterFor(view: View): FeedFilter {
+  if (view.kind === 'following') return { scope: 'following' };
+  if (view.kind === 'channel') return { channel: view.slug };
+  if (view.kind === 'author') return { author: view.id };
+  return {};
+}
+
+function emptyNoteFor(view: View): string {
+  if (view.kind === 'following') {
+    return 'Nothing from the channels you follow yet. Follow a few more, or post something to one.';
+  }
+  if (view.kind === 'channel') return 'This channel has no videos yet. Post the first one.';
+  if (view.kind === 'author') return 'This person has not posted anything yet.';
+  return 'Post a clip, or turn a spec into an explainer, and it lands here.';
+}
 
 export default function Home() {
   const [sheet, setSheet] = useState<Sheet>('none');
+  const [view, setView] = useState<View>({ kind: 'all' });
+  const [me, setMe] = useState<ApiUser | null>(null);
+  const [profileId, setProfileId] = useState<string | null>(null);
   // Remounts the feed so a newly published post appears without a page reload.
   const [feedKey, setFeedKey] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .me()
+      .then((user) => {
+        if (live) setMe(user);
+      })
+      .catch(() => {
+        // The feed already reports an unreachable API; the chrome need not say it twice.
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const onPublished = useCallback(() => {
     setSheet('none');
     setFeedKey((key) => key + 1);
   }, []);
 
+  const openChannel = useCallback((slug: string) => {
+    setView({ kind: 'channel', slug });
+    setSheet('none');
+  }, []);
+
+  const openAuthor = useCallback((id: string) => {
+    setView({ kind: 'author', id });
+    setSheet('none');
+  }, []);
+
+  const scoped = view.kind === 'channel' || view.kind === 'author';
+
   return (
-    <main className="relative h-dvh w-full overflow-hidden bg-neutral-950">
-      <FeedScreen key={feedKey} />
+    <main className="relative h-dvh w-full overflow-hidden bg-surface-0">
+      <FeedScreen key={feedKey} filter={filterFor(view)} emptyNote={emptyNoteFor(view)} />
 
       {/*
        * App chrome sits at the BOTTOM. At the top it collided with the post's own
        * chrome — progress rail, AI-reel badge and mute all live in that strip, and the
-       * create bar was drawn straight over them.
+       * create bar was drawn straight over them. The active-filter pill goes here for
+       * the same reason.
        */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4">
-        <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-white/10 bg-neutral-950/70 p-1 backdrop-blur-md">
-          <button
-            type="button"
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 px-4 pb-4">
+        {scoped ? (
+          <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-white/10 bg-[#131415]/80 py-1.5 pl-3 pr-1.5 backdrop-blur-md">
+            <Icon
+              name={view.kind === 'channel' ? 'hash' : 'user'}
+              label={null}
+              className="size-3.5 shrink-0 text-brand-300"
+            />
+            <span className="max-w-[50vw] truncate text-xs font-semibold text-white">
+              {view.kind === 'channel' ? view.slug : 'One person’s videos'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setView({ kind: 'all' })}
+              className="rounded-full p-1 text-neutral-300 transition-colors hover:bg-white/10 hover:text-white"
+            >
+              <Icon name="close" label="Clear this filter" className="size-3.5" />
+            </button>
+          </div>
+        ) : null}
+
+        <div /* Deliberately a dark pill in both themes: it floats over the video stage, not
+             over the page surface. */
+          className="pointer-events-auto flex items-center gap-1 rounded-full border border-white/10 bg-[#131415]/80 p-1 backdrop-blur-md">
+          <ScopeTab
+            label="For you"
+            active={view.kind === 'all'}
+            onClick={() => setView({ kind: 'all' })}
+          />
+          <ScopeTab
+            label="Following"
+            active={view.kind === 'following'}
+            onClick={() => setView({ kind: 'following' })}
+          />
+
+          <span aria-hidden className="mx-0.5 h-5 w-px bg-white/10" />
+
+          <IconTab icon="hash" label="Channels" onClick={() => setSheet('channels')} />
+          <IconTab
+            icon="user"
+            label="Your profile"
+            disabled={!me}
+            onClick={() => {
+              if (!me) return;
+              setProfileId(me.id);
+              setSheet('profile');
+            }}
+          />
+          <IconTab
+            icon="sparkle"
+            label="Generate from a spec"
             onClick={() => setSheet('generate')}
-            className="flex items-center gap-1.5 rounded-full bg-brand-500 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-brand-600"
-          >
-            <Icon name="sparkle" label={null} className="size-3.5" />
-            From a spec
-          </button>
-          <button
-            type="button"
-            onClick={() => setSheet('upload')}
-            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-neutral-300 transition-colors hover:text-white"
-          >
-            <Icon name="upload" label={null} className="size-3.5" />
-            Upload
-          </button>
+          />
+          <IconTab icon="upload" label="Upload a clip" onClick={() => setSheet('upload')} />
+
           <span aria-hidden className="mx-0.5 h-5 w-px bg-white/10" />
           <ThemeToggle />
         </div>
       </div>
 
       {sheet !== 'none' ? (
-        <CreateSheet
-          title={sheet === 'generate' ? 'Generate from a spec' : 'Upload a clip'}
-          onClose={() => setSheet('none')}
-        >
-          {sheet === 'generate' ? (
-            <GeneratePanel onPublished={onPublished} />
-          ) : (
-            <UploadClipForm onPublished={onPublished} />
-          )}
+        <CreateSheet title={SHEET_TITLE[sheet]} onClose={() => setSheet('none')}>
+          {sheet === 'generate' ? <GeneratePanel onPublished={onPublished} /> : null}
+          {sheet === 'upload' ? <UploadClipForm onPublished={onPublished} /> : null}
+          {sheet === 'channels' ? <ChannelsPanel onOpen={openChannel} /> : null}
+          {sheet === 'profile' && profileId ? (
+            <ProfilePanel
+              userId={profileId}
+              editable={profileId === me?.id}
+              onOpenChannel={openChannel}
+              onOpenPosts={openAuthor}
+            />
+          ) : null}
         </CreateSheet>
       ) : null}
     </main>
+  );
+}
+
+function ScopeTab({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+        active ? 'bg-brand-500 text-white' : 'text-neutral-300 hover:text-white'
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** Icon-only so the whole bar still fits a phone. The label is the accessible name. */
+function IconTab({
+  icon,
+  label,
+  onClick,
+  disabled = false,
+}: {
+  icon: 'hash' | 'user' | 'sparkle' | 'upload';
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      className="rounded-full p-2 text-neutral-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40"
+    >
+      <Icon name={icon} label={label} className="size-4" />
+    </button>
   );
 }
 

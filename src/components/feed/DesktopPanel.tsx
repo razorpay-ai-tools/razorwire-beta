@@ -166,7 +166,7 @@ export function DesktopPanel({ post, active, currentIndex }: DesktopPanelProps) 
       createdAt: new Date().toISOString(),
       // The panel does not know who you are, and one `/me` fetch per card to label a row
       // that is about to be replaced is not worth it.
-      author: { id: pendingId, name: 'You', email: '', picture: null },
+      author: { id: pendingId, name: 'You', email: '', picture: null, bio: '' },
     };
 
     setComments((current) => [pending, ...(current ?? [])]);
@@ -251,16 +251,15 @@ export function DesktopPanel({ post, active, currentIndex }: DesktopPanelProps) 
                 <span className="text-ink-muted">{post.team}</span>
               </>
             ) : null}
-            <span aria-hidden className="text-ink-subtle">
-              &middot;
-            </span>
+            {/* No separator dot before this one: the line wraps at narrow panel widths and
+                the dot was left dangling at the end of the row. The icon separates it. */}
             <span className="inline-flex items-center gap-1 font-mono text-[11px] text-ink-muted">
               <Icon name="eye" label={null} className="size-3.5 shrink-0" />
               {compactCount(post.views)} views
             </span>
           </p>
 
-          <CategoryChip category={post.category} />
+          <CategoryChip category={post.channel ? `#${post.channel.slug}` : post.category} />
         </div>
 
         <h2 className="mt-2 text-pretty text-base font-semibold leading-snug tracking-tight text-ink">

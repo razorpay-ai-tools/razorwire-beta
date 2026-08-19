@@ -46,18 +46,18 @@ export function StoryboardInspector({ storyboard, currentIndex }: StoryboardInsp
 
   return (
     <section
-      className="flex h-full min-h-0 w-full flex-col border-neutral-800 bg-neutral-950 md:border-l"
+      className="flex h-full min-h-0 w-full flex-col border-hairline bg-surface-0 md:border-l"
       aria-label="Storyboard inspector"
     >
-      <header className="shrink-0 border-b border-neutral-800 px-4 py-4">
+      <header className="shrink-0 border-b border-hairline px-4 py-4">
         <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-300">
           Storyboard
         </p>
-        <h2 className="mt-1.5 text-base font-semibold leading-snug tracking-tight text-neutral-50">
+        <h2 className="mt-1.5 text-base font-semibold leading-snug tracking-tight text-ink">
           {meta.title}
         </h2>
 
-        <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-neutral-400">
+        <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-ink-muted">
           <span>
             {scenes.length} {scenes.length === 1 ? 'scene' : 'scenes'}
           </span>
@@ -86,7 +86,7 @@ export function StoryboardInspector({ storyboard, currentIndex }: StoryboardInsp
             {meta.tags.map((tag) => (
               <li
                 key={tag}
-                className="rounded-full border border-white/10 bg-neutral-900 px-2 py-0.5 font-mono text-[10px] text-neutral-300"
+                className="rounded-full border border-hairline bg-surface-1 px-2 py-0.5 font-mono text-[10px] text-ink-muted"
               >
                 {tag}
               </li>
@@ -99,14 +99,14 @@ export function StoryboardInspector({ storyboard, currentIndex }: StoryboardInsp
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-3 inline-flex max-w-full items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-2 text-xs font-medium text-neutral-200 transition hover:border-brand-500/50 hover:text-brand-200"
+            className="mt-3 inline-flex max-w-full items-center gap-2 rounded-xl border border-hairline bg-surface-1 px-3 py-2 text-xs font-medium text-ink transition hover:border-brand-500/50 hover:text-brand-200"
           >
             <Icon name="doc" label={null} className="size-3.5 shrink-0" />
             <span className="truncate">{source.title ?? source.docId ?? 'Open the source doc'}</span>
             <span className="sr-only">(opens in a new tab)</span>
           </a>
         ) : (
-          <p className="mt-3 flex items-start gap-2 text-[11px] leading-relaxed text-neutral-500">
+          <p className="mt-3 flex items-start gap-2 text-[11px] leading-relaxed text-ink0">
             <Icon name="alert" label={null} className="mt-px size-3.5 shrink-0 text-warning" />
             <span>
               Generated from a topic, not a document. There is no source to check this against.
@@ -115,7 +115,7 @@ export function StoryboardInspector({ storyboard, currentIndex }: StoryboardInsp
         )}
       </header>
 
-      <ol className="min-h-0 flex-1 divide-y divide-neutral-800/70 overflow-y-auto">
+      <ol className="min-h-0 flex-1 divide-y divide-hairline/70 overflow-y-auto">
         {scenes.map((scene, index) => {
           const current = index === currentIndex;
           const heading = headingOf(scene);
@@ -128,11 +128,11 @@ export function StoryboardInspector({ storyboard, currentIndex }: StoryboardInsp
             >
               <div className="flex items-center gap-2">
                 <span
-                  className={`font-mono text-[11px] font-semibold ${current ? 'text-brand-200' : 'text-neutral-500'}`}
+                  className={`font-mono text-[11px] font-semibold ${current ? 'text-brand-200' : 'text-ink0'}`}
                 >
                   {String(index + 1).padStart(2, '0')}
                 </span>
-                <span className="rounded-full border border-white/10 bg-neutral-900 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-neutral-300">
+                <span className="rounded-full border border-hairline bg-surface-1 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-ink-muted">
                   {scene.type}
                 </span>
                 {current ? (
@@ -144,14 +144,14 @@ export function StoryboardInspector({ storyboard, currentIndex }: StoryboardInsp
               </div>
 
               {heading ? (
-                <p className="mt-2 text-sm font-semibold leading-snug text-neutral-100">{heading}</p>
+                <p className="mt-2 text-sm font-semibold leading-snug text-ink">{heading}</p>
               ) : null}
 
               {/* The spine: narration, then the citation that backs it, on one rule. */}
               <div
-                className={`mt-2 border-l-2 pl-3 ${current ? 'border-brand-400' : 'border-neutral-700'}`}
+                className={`mt-2 border-l-2 pl-3 ${current ? 'border-brand-400' : 'border-hairline'}`}
               >
-                <p className="text-[13px] leading-relaxed text-neutral-300">{scene.narration}</p>
+                <p className="text-[13px] leading-relaxed text-ink-muted">{scene.narration}</p>
 
                 {scene.cite ? (
                   <span className="mt-2 flex">
@@ -163,7 +163,7 @@ export function StoryboardInspector({ storyboard, currentIndex }: StoryboardInsp
                     <span>Uncited claim — nothing to check this scene against.</span>
                   </p>
                 ) : (
-                  <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+                  <p className="mt-2 text-[11px] leading-relaxed text-ink0">
                     No citation needed — a {scene.type} card states no fact.
                   </p>
                 )}

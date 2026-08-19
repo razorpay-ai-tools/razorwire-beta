@@ -18,6 +18,29 @@ export interface ApiUser {
   email: string;
   name: string;
   picture: string | null;
+  bio: string;
+}
+
+/** What a post carries about its channel — enough to label and link it. */
+export interface ChannelRef {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface Channel extends ChannelRef {
+  description: string;
+  posts: number;
+  followers: number;
+  /** Whether the caller follows it. */
+  following: boolean;
+}
+
+export interface Profile {
+  user: ApiUser;
+  posts: number;
+  /** Channels this person follows. */
+  channels: Channel[];
 }
 
 /** `generated` renders a storyboard; `clip` plays an uploaded video. */
@@ -39,6 +62,7 @@ export interface Post {
   views: number;
   createdAt: string;
   author: ApiUser;
+  channel: ChannelRef | null;
   likes: number;
   saves: number;
   comments: number;
@@ -102,6 +126,19 @@ export interface CreatePostRequest {
   durationMs?: number;
   storyboard?: Storyboard;
   sourceDocId?: string;
+  channelId?: string;
+}
+
+/**
+ * Which slice of the feed to read. All three are the same endpoint with an extra
+ * WHERE — the home feed, a channel's videos and a profile's posts share pagination.
+ */
+export interface FeedFilter {
+  scope?: 'all' | 'following';
+  /** Channel slug. */
+  channel?: string;
+  /** Author user id. */
+  author?: string;
 }
 
 export class ApiError extends Error {
@@ -141,11 +178,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   me: () => request<ApiUser>('/me'),
 
-  feed: (cursor?: string | null, limit = 10) => {
+  updateMe: (body: { name?: string; bio?: string }) =>
+    request<ApiUser>('/me', { method: 'PATCH', body: JSON.stringify(body) }),
+
+  profile: (userId: string) => request<Profile>(`/users/${userId}`),
+
+  feed: (cursor?: string | null, filter: FeedFilter = {}, limit = 10) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set('cursor', cursor);
+    if (filter.scope) params.set('scope', filter.scope);
+    if (filter.channel) params.set('channel', filter.channel);
+    if (filter.author) params.set('author', filter.author);
     return request<FeedPage>(`/feed?${params}`);
   },
+
+  channels: (following = false) =>
+    request<Channel[]>(`/channels${following ? '?following=true' : ''}`),
+
+  createChannel: (body: { name: string; description?: string }) =>
+    request<Channel>('/channels', { method: 'POST', body: JSON.stringify(body) }),
+
+  toggleFollow: (slug: string) =>
+    request<Toggle>(`/channels/${slug}/follow`, { method: 'POST' }),
 
   post: (id: string) => request<Post>(`/posts/${id}`),
 

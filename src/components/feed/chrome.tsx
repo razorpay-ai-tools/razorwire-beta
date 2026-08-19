@@ -115,7 +115,9 @@ export function PostMeta({ post }: { post: Post }) {
               <span className="text-neutral-400">{post.team}</span>
             </>
           ) : null}
-          <CategoryChip category={post.category} />
+          {/* The channel is the label that matters once you can follow one; the
+              category is the fallback for posts that predate channels. */}
+          <CategoryChip category={post.channel ? `#${post.channel.slug}` : post.category} />
         </div>
 
         <h2 className="mt-1.5 text-pretty text-[17px] font-semibold leading-snug tracking-tight text-white [text-shadow:0_1px_3px_rgb(0_0_0/0.9)]">

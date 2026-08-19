@@ -162,14 +162,25 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
         {/*
          * `stage-dark` — the one deliberate exception to the theme. Captions, citation
          * chips and scene text sit over arbitrary footage; a light scrim cannot hold them
-         * legible. The utility re-declares the surface/ink variables locally, so the scene
-         * templates and shared chrome keep working against a dark backdrop while the panel
-         * beside them follows the reader's theme.
+         * legible, so this column stays dark in both themes.
+         *
+         * The class is here for what it genuinely does: `color-scheme: dark` (which the
+         * clip's `<input type="range">` and any scrollbar inside the stage read), and the
+         * `--rw-*` variables that `.input` consumes directly.
+         *
+         * The BACKGROUND is `bg-neutral-950`, a raw always-dark step, NOT `bg-surface-0`.
+         * `stage-dark` cannot flip Tailwind's semantic colour utilities: `@theme` declares
+         * `--color-surface-0: var(--rw-surface-0)` on `:root`, so that indirection is
+         * resolved to a literal there and inherited as an already-computed value.
+         * Re-declaring `--rw-surface-0` further down the tree comes too late. Measured:
+         * `--rw-surface-0` reads #131415 on this element while `bg-surface-0` still paints
+         * #f7f7f7. Every other thing inside the stage already uses raw dark steps, so this
+         * is consistent rather than a special case.
          */}
         <div
           data-testid="desktop-stage"
           style={STAGE_STYLE}
-          className="stage-dark relative aspect-[9/16] h-full shrink-0 overflow-hidden bg-surface-0"
+          className="stage-dark relative aspect-[9/16] h-full shrink-0 overflow-hidden bg-neutral-950"
         >
           {generated ? (
             <SceneStage post={post} active={active} reel={reel} />
@@ -246,7 +257,15 @@ function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel:
        * pipeline, least of all on the surface built for reading a spec against narration.
        * The b-roll still gets the real `active` below — that drives playback, not opacity.
        */}
-      <div className="pointer-events-none absolute inset-0 z-20">
+      {/*
+       * `[&_.scene-safe]:pr-5` puts the scene's right padding back to the normal inline
+       * 1.25rem. SceneShell reserves 4.75rem there to clear the feed's floating action
+       * rail, which is correct on mobile and wrong here: this card's like/comment/save
+       * live in the panel's footer, so nothing floats over the frame and the reserve just
+       * shifts every scene visibly off-centre. Overridden from the container that knows
+       * the premise changed rather than by editing the shared shell.
+       */}
+      <div className="pointer-events-none absolute inset-0 z-20 [&_.scene-safe]:pr-5">
         <SceneView scene={scene} active={false} />
       </div>
 

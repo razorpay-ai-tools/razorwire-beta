@@ -63,14 +63,27 @@
    * Semantic surfaces. THESE are what components should use, not raw neutral steps,
    * because these are the ones that flip between light and dark. `bg-surface-1`
    * survives a theme switch; `bg-neutral-900` does not.
+   *
+   * Declared as literals, NOT as `var(--color-surface-0)` indirection. A custom property
+   * is substituted at computed-value time on the element carrying the declaration, so
+   * an alias declared on :root resolves there and inherits as a fixed colour —
+   * redefining the inner variable further down the tree has no effect. That is exactly
+   * why the first version of `stage-dark` failed to darken anything. Overrides below
+   * therefore reassign these names directly.
    */
-  --color-surface-0: var(--rw-surface-0);
-  --color-surface-1: var(--rw-surface-1);
-  --color-surface-2: var(--rw-surface-2);
-  --color-ink: var(--rw-ink);
-  --color-ink-muted: var(--rw-ink-muted);
-  --color-ink-subtle: var(--rw-ink-subtle);
-  --color-hairline: var(--rw-hairline);
+  --color-surface-0: #131415;
+  --color-surface-1: #1f2123;
+  --color-surface-2: #27292b;
+  --color-ink: #eaebeb;
+  --color-ink-muted: #96999c;
+  /*
+   * ink-subtle measures 3.7:1 light / 3.6:1 dark against surface-1, which is UNDER the
+   * 4.5:1 floor for body text. It is for de-emphasised non-essential text only —
+   * timestamps, hints, disabled states — never for anything a reader must be able to
+   * read. Use ink-muted (5.3:1 / 5.6:1) for secondary copy that matters.
+   */
+  --color-ink-subtle: #73787d;
+  --color-hairline: #3b3d40;
 }
 
 /*
@@ -86,39 +99,32 @@
  * inspector, the conversation panel — flips. Instagram and NotebookLM do the same, and
  * for the same reason.
  */
-:root,
 :root[data-theme='dark'] {
-  --rw-surface-0: #131415; /* page */
-  --rw-surface-1: #1f2123; /* card */
-  --rw-surface-2: #27292b; /* raised */
-  --rw-ink: #eaebeb;
-  --rw-ink-muted: #96999c;
-  --rw-ink-subtle: #73787d;
-  --rw-hairline: #3b3d40;
   color-scheme: dark;
 }
 
 :root[data-theme='light'] {
   /* Blade neutral.blueGrayLight */
-  --rw-surface-0: #f7f7f7;
-  --rw-surface-1: #ffffff;
-  --rw-surface-2: #dee1e3;
-  --rw-ink: #191d1f;
-  --rw-ink-muted: #616d75;
-  --rw-ink-subtle: #7b878e;
-  --rw-hairline: #c8cdd0;
+  --color-surface-0: #f7f7f7;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #dee1e3;
+  --color-ink: #191d1f;
+  --color-ink-muted: #616d75;
+  --color-ink-subtle: #7b878e;
+  --color-hairline: #c8cdd0;
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme]) {
-    --rw-surface-0: #f7f7f7;
-    --rw-surface-1: #ffffff;
-    --rw-surface-2: #dee1e3;
-    --rw-ink: #191d1f;
-    --rw-ink-muted: #616d75;
-    --rw-ink-subtle: #7b878e;
-    --rw-hairline: #c8cdd0;
+    /* Blade neutral.blueGrayLight */
+    --color-surface-0: #f7f7f7;
+    --color-surface-1: #ffffff;
+    --color-surface-2: #dee1e3;
+    --color-ink: #191d1f;
+    --color-ink-muted: #616d75;
+    --color-ink-subtle: #7b878e;
+    --color-hairline: #c8cdd0;
     color-scheme: light;
   }
 }
@@ -151,14 +157,14 @@
 }
 
 html {
-  background: var(--rw-surface-0);
+  background: var(--color-surface-0);
   /* smooth scroll fights scroll-snap on the feed; snap does the animating */
   scroll-behavior: auto;
 }
 
 body {
-  background: var(--rw-surface-0);
-  color: var(--rw-ink);
+  background: var(--color-surface-0);
+  color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
@@ -168,13 +174,13 @@ body {
  * 9:16 player in this and its contents can keep assuming a dark backdrop.
  */
 @utility stage-dark {
-  --rw-surface-0: #131415;
-  --rw-surface-1: #1f2123;
-  --rw-surface-2: #27292b;
-  --rw-ink: #eaebeb;
-  --rw-ink-muted: #96999c;
-  --rw-ink-subtle: #73787d;
-  --rw-hairline: #3b3d40;
+  --color-surface-0: #131415;
+  --color-surface-1: #1f2123;
+  --color-surface-2: #27292b;
+  --color-ink: #eaebeb;
+  --color-ink-muted: #96999c;
+  --color-ink-subtle: #73787d;
+  --color-hairline: #3b3d40;
   color-scheme: dark;
 }
 
@@ -263,10 +269,10 @@ body {
 .input {
   width: 100%;
   border-radius: 0.75rem;
-  border: 1px solid var(--rw-hairline);
-  background: var(--rw-surface-1);
+  border: 1px solid var(--color-hairline);
+  background: var(--color-surface-1);
   padding: 0.75rem 0.9rem;
-  color: var(--rw-ink);
+  color: var(--color-ink);
   font-size: 0.9rem;
   transition:
     border-color 160ms ease,
@@ -280,7 +286,7 @@ body {
 }
 
 .input::placeholder {
-  color: var(--rw-ink-subtle);
+  color: var(--color-ink-subtle);
 }
 
 /* Visible keyboard focus everywhere. Non-negotiable, not a nice-to-have. */

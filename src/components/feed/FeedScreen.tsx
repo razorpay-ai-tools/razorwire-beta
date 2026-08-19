@@ -14,9 +14,9 @@
  * becoming visible — `snap-mandatory` would refuse to scroll to it.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Icon } from '@/components/ui';
-import { api, type Post } from '@/lib/api';
+import { api, type FeedFilter, type Post } from '@/lib/api';
 import { FeedPost } from './FeedPost';
 import { MuteProvider } from './chrome';
 
@@ -43,7 +43,15 @@ function Centered({ children }: { children: ReactNode }) {
   );
 }
 
-export function FeedScreen({ aside }: { aside?: ReactNode }) {
+interface FeedScreenProps {
+  aside?: ReactNode;
+  /** Which slice to read. Changing it refetches from page one. */
+  filter?: FeedFilter;
+  /** Shown instead of the stock copy when the slice is empty. */
+  emptyNote?: ReactNode;
+}
+
+export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('loading');
@@ -57,6 +65,23 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
   const viewed = useRef(new Set<string>());
   const inFlight = useRef(false);
 
+  // Callers pass an object literal, so its identity changes every render. Key the
+  // fetches on the values instead, or the feed refetches forever.
+  const filterKey = JSON.stringify(filter ?? {});
+  const activeFilter = useMemo(() => JSON.parse(filterKey) as FeedFilter, [filterKey]);
+
+  // A different slice means everything on screen belongs to the previous one. Reset
+  // during render rather than in an effect, which would paint the stale posts once.
+  const [trackedFilter, setTrackedFilter] = useState(filterKey);
+  if (trackedFilter !== filterKey) {
+    setTrackedFilter(filterKey);
+    setPosts([]);
+    setCursor(null);
+    setActiveIndex(0);
+    setError(null);
+    setPhase('loading');
+  }
+
   // First page. State only ever changes in the promise callbacks — updating it
   // synchronously in an effect body cascades an extra render.
   useEffect(() => {
@@ -64,7 +89,7 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
     inFlight.current = true;
 
     api
-      .feed()
+      .feed(null, activeFilter)
       .then((page) => {
         if (!live) return;
         setPosts(page.items);
@@ -84,30 +109,33 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
     return () => {
       live = false;
     };
-  }, [reloadToken]);
+  }, [reloadToken, activeFilter]);
 
   /** Subsequent pages. Only ever called from an observer or a click. */
-  const loadMore = useCallback(async (from: string) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setPaging(true);
+  const loadMore = useCallback(
+    async (from: string) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
+      setPaging(true);
 
-    try {
-      const page = await api.feed(from);
-      setPosts((current) => {
-        // StrictMode double-invokes effects in dev; de-dupe rather than show doubles.
-        const seen = new Set(current.map((post) => post.id));
-        return [...current, ...page.items.filter((post) => !seen.has(post.id))];
-      });
-      setCursor(page.nextCursor);
-      setError(null);
-    } catch (cause) {
-      setError(messageFor(cause));
-    } finally {
-      inFlight.current = false;
-      setPaging(false);
-    }
-  }, []);
+      try {
+        const page = await api.feed(from, activeFilter);
+        setPosts((current) => {
+          // StrictMode double-invokes effects in dev; de-dupe rather than show doubles.
+          const seen = new Set(current.map((post) => post.id));
+          return [...current, ...page.items.filter((post) => !seen.has(post.id))];
+        });
+        setCursor(page.nextCursor);
+        setError(null);
+      } catch (cause) {
+        setError(messageFor(cause));
+      } finally {
+        inFlight.current = false;
+        setPaging(false);
+      }
+    },
+    [activeFilter],
+  );
 
   // Which post is active. 60% visible is past the point where snap has committed.
   useEffect(() => {
@@ -211,7 +239,7 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
         <Icon name="sparkle" label={null} className="mx-auto size-7 text-brand-300" />
         <h2 className="mt-3 text-base font-semibold text-ink">Nothing here yet</h2>
         <p className="mt-1.5 text-sm text-ink-muted">
-          Post a clip, or turn a spec into an explainer, and it lands here.
+          {emptyNote ?? 'Post a clip, or turn a spec into an explainer, and it lands here.'}
         </p>
       </Centered>
     );
@@ -232,13 +260,18 @@ export function FeedScreen({ aside }: { aside?: ReactNode }) {
 
   return (
     <MuteProvider>
-      <div className="flex h-dvh w-full justify-center bg-surface-0 md:gap-6 md:px-6">
+      {/* lg:px-0 — from lg the post is a self-bounding card that centres its own player
+          against the viewport, so outer padding here would shift it off the centre line. */}
+      <div className="flex h-dvh w-full justify-center bg-surface-0 md:gap-6 md:px-6 lg:px-0">
         {/*
          * The 9:16 frame up to md. At lg the post itself becomes a split card that owns
-         * its own frame, so the column widens and the outer ring comes off rather than
-         * drawing a second border around the card's.
+         * its own frame, so the column goes full width and the outer ring comes off rather
+         * than drawing a second border around the card's.
+         *
+         * `lg:max-w-none` matters: a max width here was capping the row the card centres
+         * itself in, which pulled the player 72px left of the viewport's centre line.
          */}
-        <div className="relative h-dvh w-full md:max-w-md lg:max-w-6xl">
+        <div className="relative h-dvh w-full md:max-w-md lg:max-w-none">
           <div
             ref={scrollRef}
             className="h-dvh w-full snap-y snap-mandatory overflow-y-scroll overscroll-y-contain bg-surface-0 md:rounded-2xl md:ring-1 md:ring-hairline lg:rounded-none lg:ring-0"

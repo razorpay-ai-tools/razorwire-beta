@@ -28,7 +28,9 @@ export type IconName =
   | 'check'
   | 'alert'
   | 'sparkle'
-  | 'quote';
+  | 'quote'
+  | 'hash'
+  | 'user';
 
 const PATHS: Record<IconName, string> = {
   sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v3M12 20v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1 12h3M20 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1',
@@ -49,6 +51,8 @@ const PATHS: Record<IconName, string> = {
   alert: 'M12 3l9 16H3zM12 9v5M12 17h.01',
   sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z',
   quote: 'M7 7h4v6H7zM13 7h4v6h-4zM7 13c0 2 1 3 3 4M13 13c0 2 1 3 3 4',
+  hash: 'M9.5 3 7.5 21M16.5 3l-2 18M3.5 8.5h17M2.5 15.5h17',
+  user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5a7.5 7.5 0 0 1 15 0',
 };
 
 interface IconProps {
@@ -148,10 +152,20 @@ export function ProgressRail({
   );
 }
 
-/** Category pill. Text carries the meaning; colour only reinforces it. */
+/**
+ * Category pill. Text carries the meaning; colour only reinforces it.
+ *
+ * Uses the semantic tokens, unlike `CitationChip` below. This chip appears in BOTH
+ * places — over the dark video stage and inside the theme-aware desktop panel — so a
+ * hardcoded dark pill rendered at roughly 2:1 against a white panel. Inside
+ * `stage-dark` these tokens resolve dark anyway, so one definition covers both.
+ *
+ * Uses `text-ink` rather than `text-ink-muted`: at 10px this counts as small text, and
+ * muted-on-surface-2 measured about 4.4:1, under the 4.5:1 floor.
+ */
 export function CategoryChip({ category }: { category: string }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-white/15 bg-neutral-950/60 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-300 backdrop-blur-md">
+    <span className="inline-flex items-center rounded-full border border-hairline bg-surface-2/70 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink backdrop-blur-md">
       {category}
     </span>
   );

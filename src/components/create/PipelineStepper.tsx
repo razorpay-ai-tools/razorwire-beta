@@ -101,9 +101,11 @@ interface PipelineStepperProps {
   onDone: (job: Job) => void;
   /** Rendered as Retry on failure. Only the caller knows the request to re-send. */
   onRetry?: () => void;
+  /** Channel to post the finished reel to, when the author picked one. */
+  channelId?: string;
 }
 
-export function PipelineStepper({ jobId, onDone, onRetry }: PipelineStepperProps) {
+export function PipelineStepper({ jobId, onDone, onRetry, channelId }: PipelineStepperProps) {
   const [job, setJob] = useState<Job | null>(null);
   const [seen, setSeen] = useState<readonly StepKey[]>(['queued']);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -130,33 +132,39 @@ export function PipelineStepper({ jobId, onDone, onRetry }: PipelineStepperProps
   }, [onDone]);
 
   /** Turn the finished job into a feed post, then hand the post id back up. */
-  const publish = useCallback(async (finished: Job) => {
-    if (postedRef.current) return;
-    const storyboard = finished.storyboard;
-    if (!storyboard) {
-      setPublishError('The job finished but returned no storyboard, so there is nothing to publish.');
-      return;
-    }
+  const publish = useCallback(
+    async (finished: Job) => {
+      if (postedRef.current) return;
+      const storyboard = finished.storyboard;
+      if (!storyboard) {
+        setPublishError(
+          'The job finished but returned no storyboard, so there is nothing to publish.',
+        );
+        return;
+      }
 
-    postedRef.current = true;
-    setPublishing(true);
-    setPublishError(null);
-    try {
-      const post = await api.createPost({
-        kind: 'generated',
-        storyboard,
-        title: storyboard.meta.title,
-        tags: storyboard.meta.tags,
-        ...(storyboard.source.docId ? { sourceDocId: storyboard.source.docId } : {}),
-      });
-      onDoneRef.current({ ...finished, postId: post.id });
-    } catch (err: unknown) {
-      postedRef.current = false;
-      setPublishError(messageOf(err, 'Could not add the reel to the feed.'));
-    } finally {
-      setPublishing(false);
-    }
-  }, []);
+      postedRef.current = true;
+      setPublishing(true);
+      setPublishError(null);
+      try {
+        const post = await api.createPost({
+          kind: 'generated',
+          storyboard,
+          title: storyboard.meta.title,
+          tags: storyboard.meta.tags,
+          ...(storyboard.source.docId ? { sourceDocId: storyboard.source.docId } : {}),
+          ...(channelId ? { channelId } : {}),
+        });
+        onDoneRef.current({ ...finished, postId: post.id });
+      } catch (err: unknown) {
+        postedRef.current = false;
+        setPublishError(messageOf(err, 'Could not add the reel to the feed.'));
+      } finally {
+        setPublishing(false);
+      }
+    },
+    [channelId],
+  );
 
   useEffect(() => {
     let cancelled = false;

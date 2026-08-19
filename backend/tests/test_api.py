@@ -221,6 +221,94 @@ def test_aidoc_generation_requires_a_doc_id(client):
     assert r.status_code == 422
 
 
+# ------------------------------------------------------------------ channels & profiles
+
+
+def test_channel_follow_drives_the_following_feed(client):
+    """The one path the feature rests on: create, unfollow, post, filter."""
+    followed = client.post("/channels", json={"name": "Payments Core", "description": "money path"})
+    assert followed.status_code == 201
+    body = followed.json()
+    # the creator follows their own channel, else it is missing from the feed they read
+    assert (body["slug"], body["following"], body["followers"]) == ("payments-core", True, 1)
+
+    ignored = client.post("/channels", json={"name": "Culture"}).json()
+    assert client.post(f"/channels/{ignored['slug']}/follow").json() == {
+        "active": False,
+        "count": 0,
+    }
+
+    for channel in (body, ignored):
+        created = client.post(
+            "/posts",
+            json={
+                "title": f"clip in {channel['slug']}",
+                "kind": "clip",
+                "mediaUrl": "/media/x.mp4",
+                "channelId": channel["id"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["channel"]["slug"] == channel["slug"]
+
+    def titles(**params):
+        return [item["title"] for item in client.get("/feed", params=params).json()["items"]]
+
+    assert titles(scope="following") == ["clip in payments-core"]
+    assert titles(channel="culture") == ["clip in culture"]
+    assert set(titles()) >= {"clip in payments-core", "clip in culture"}
+
+    listed = {c["slug"]: c for c in client.get("/channels").json()}
+    assert (listed["payments-core"]["posts"], listed["culture"]["posts"]) == (1, 1)
+    assert [c["slug"] for c in client.get("/channels", params={"following": True}).json()] == [
+        "payments-core"
+    ]
+
+
+def test_duplicate_channel_name_is_a_conflict(client):
+    assert client.post("/channels", json={"name": "Architecture"}).status_code == 201
+    assert client.post("/channels", json={"name": "architecture"}).status_code == 409
+    assert client.post("/channels", json={"name": "!!!"}).status_code == 422
+
+
+def test_post_rejects_an_unknown_channel(client):
+    r = client.post(
+        "/posts",
+        json={"title": "orphan", "kind": "clip", "mediaUrl": "/media/x.mp4", "channelId": "chn_nope"},
+    )
+    assert r.status_code == 422
+
+
+def test_profile_reports_posts_and_followed_channels(client):
+    me = client.patch("/me", json={"name": "Tester", "bio": "writes specs"}).json()
+    assert (me["name"], me["bio"]) == ("Tester", "writes specs")
+
+    channel = client.post("/channels", json={"name": "Onboarding"}).json()
+    client.post(
+        "/posts",
+        json={
+            "title": "profile post",
+            "kind": "clip",
+            "mediaUrl": "/media/x.mp4",
+            "channelId": channel["id"],
+        },
+    )
+
+    profile = client.get(f"/users/{me['id']}").json()
+    assert profile["user"]["bio"] == "writes specs"
+    assert profile["posts"] >= 1
+    assert "onboarding" in {c["slug"] for c in profile["channels"]}
+    assert client.get("/users/usr_missing").status_code == 404
+    assert "profile post" in [
+        item["title"] for item in client.get("/feed", params={"author": me["id"]}).json()["items"]
+    ]
+
+
+def test_unknown_channel_slug_is_a_404(client):
+    assert client.get("/channels/nope").status_code == 404
+    assert client.get("/feed", params={"channel": "nope"}).status_code == 404
+
+
 # ------------------------------------------------------------------ aidocs ingest
 
 from app.aidocs import AidocsUnavailable, fetch_doc, parse_doc_html  # noqa: E402
