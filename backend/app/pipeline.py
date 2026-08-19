@@ -1,9 +1,14 @@
 """The generation pipeline.
 
-Stage 1 (here): source text -> storyboard, via a Claude tool call whose
-``input_schema`` is generated from the same models that validate the result. When
-validation fails the errors are handed back to the model and it retries, so a
-malformed storyboard costs a retry instead of a failed job.
+Stage 1 (here): source text -> storyboard, via a model tool call whose ``input_schema``
+is generated from the same models that validate the result. When validation fails the
+errors are handed back to the model and it retries, so a malformed storyboard costs a
+retry instead of a failed job.
+
+The call goes through Razorpay's LiteLLM gateway, which serves Anthropic's
+``/v1/messages`` shape and translates it to whichever model is configured. That is why
+this module still imports the ``anthropic`` SDK while running ``glm-5p2``: the wire
+format is the contract, not the vendor. See ``Settings.llm_base_url``.
 
 Stages 2 and 3 (voice, visuals) are only needed for the MP4 export path. The
 browser reel narrates with the Web Speech API and derives scene timing from
@@ -133,12 +138,15 @@ def run_script_stage(
     :raises StoryboardInvalid: if the model cannot produce a valid storyboard in
         ``MAX_ATTEMPTS`` attempts; carries the final round of errors
     """
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+    if not settings.llm_api_key:
+        raise RuntimeError("LITELLM_API_KEY is not set (or ANTHROPIC_API_KEY for a direct key)")
 
     from anthropic import Anthropic
 
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    # The gateway serves Anthropic's `/v1/messages` shape for every model it routes, so
+    # the only difference from talking to Anthropic directly is where it points. An empty
+    # base URL means exactly that: talk to Anthropic directly.
+    client = Anthropic(api_key=settings.llm_api_key, base_url=settings.llm_base_url or None)
     tool = {
         "name": _TOOL_NAME,
         "description": "Emit the finished storyboard.",
@@ -149,7 +157,7 @@ def run_script_stage(
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         response = client.messages.create(
-            model=settings.anthropic_model,
+            model=settings.llm_model,
             max_tokens=4096,
             system=_system_prompt(),
             tools=[tool],

@@ -459,6 +459,60 @@ def test_prompt_text_is_not_truncated():
     assert len(doc.to_prompt_text()) > 8000
 
 
+# ------------------------------------------------------------------ the model call
+
+from app.config import settings  # noqa: E402
+from app.pipeline import run_script_stage  # noqa: E402
+
+
+def test_script_stage_calls_the_gateway_with_the_configured_model(monkeypatch):
+    """Where the call goes, and as what.
+
+    The gateway serves Anthropic's `/v1/messages` shape for every model it routes, which
+    is the only reason the `anthropic` SDK can drive `glm-5p2`. Nothing else asserts that,
+    so a base URL or model rename would otherwise be found by a failed demo.
+    """
+    seen: dict = {}
+
+    class _FakeMessages:
+        def create(self, **kwargs):
+            seen.update(kwargs)
+            raise RuntimeError("stop here — the wiring is what is under test")
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            seen["client"] = kwargs
+            self.messages = _FakeMessages()
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+    monkeypatch.setattr(settings, "litellm_api_key", "sk-test-gateway")
+
+    with pytest.raises(RuntimeError, match="stop here"):
+        run_script_stage(kind="topic", text="how mandates are debited")
+
+    assert seen["client"]["base_url"] == "https://llm-gateway.razorpay.com"
+    assert seen["client"]["api_key"] == "sk-test-gateway"
+    assert seen["model"] == "glm-5p2"
+    # The forced tool call is the contract; a model that free-texts instead is useless.
+    assert seen["tool_choice"] == {"type": "tool", "name": "emit_storyboard"}
+
+
+def test_script_stage_refuses_to_run_without_a_key(monkeypatch):
+    monkeypatch.setattr(settings, "litellm_api_key", "")
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    with pytest.raises(RuntimeError, match="LITELLM_API_KEY"):
+        run_script_stage(kind="topic", text="anything")
+
+
+def test_a_direct_anthropic_key_still_works(monkeypatch):
+    """Whoever holds a real Anthropic key should not be forced through the gateway."""
+    monkeypatch.setattr(settings, "litellm_api_key", "")
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-direct")
+    assert settings.llm_api_key == "sk-ant-direct"
+
+
 # ------------------------------------------------------------------ media URLs
 
 def test_media_url_is_absolute(client):
