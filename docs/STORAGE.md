@@ -56,8 +56,29 @@ Correctness lives in the database:
 
 ## Media
 
-Current uploads still land on local disk via `MEDIA_DIR`. That is fine for one
-box. For a shared demo, put uploaded clips and generated MP4s in S3 or Supabase
-Storage and store only the URL/key in `posts.media_url`.
+Videos are object storage files, not database rows.
+
+Set these in `backend/.env` to store uploads in Supabase Storage:
+
+```env
+SUPABASE_URL=https://PROJECT_REF.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+SUPABASE_STORAGE_BUCKET=razorwire-videos
+SUPABASE_STORAGE_PUBLIC=true
+MAX_UPLOAD_BYTES=52428800
+```
+
+Create the `razorwire-videos` bucket in Supabase Storage with a 50 MB file cap.
+Public buckets let the feed render clips directly with `<video src="...">`.
+Private buckets need signed URLs; do that after SSO/permissions are real.
+
+Postgres stores only:
+
+- `posts.media_url`
+- `posts.storage_key`
+- `posts.thumbnail_url`
+
+If the Supabase Storage env vars are absent, uploads still land on local disk via
+`MEDIA_DIR`.
 
 ponytail: no migration tool yet. Add Alembic after the schema needs history.

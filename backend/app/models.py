@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, Column, UniqueConstraint
+from sqlalchemy import JSON, Column, UniqueConstraint, inspect, text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Field, Session, SQLModel, create_engine
 
@@ -57,6 +57,8 @@ class Post(SQLModel, table=True):
     kind: str = Field(default="clip", index=True)
     #: uploaded video, or the rendered MP4 export once one exists
     media_url: str | None = None
+    storage_key: str | None = None
+    thumbnail_url: str | None = None
     duration_ms: int | None = None
 
     #: full storyboard for kind="generated"; the web app renders scenes from this
@@ -151,6 +153,18 @@ _engine = create_engine(_database_url_value, echo=False, **_engine_kwargs(_datab
 
 def init_db() -> None:
     SQLModel.metadata.create_all(_engine)
+    _ensure_post_media_columns()
+
+
+def _ensure_post_media_columns() -> None:
+    existing = {column["name"] for column in inspect(_engine).get_columns("posts")}
+    missing = [name for name in ("storage_key", "thumbnail_url") if name not in existing]
+    if not missing:
+        return
+    # ponytail: tiny additive migration. Replace with Alembic when schema history matters.
+    with _engine.begin() as conn:
+        for name in missing:
+            conn.execute(text(f"alter table posts add column {name} varchar"))
 
 
 def get_session() -> Session:
