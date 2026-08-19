@@ -1,0 +1,68 @@
+# Railway backend hosting
+
+Railway can deploy the FastAPI backend from the local `backend/` directory, so it
+does not need GitHub repo access.
+
+## Deployed backend
+
+```txt
+https://razorwire-api-production.up.railway.app
+```
+
+Health:
+
+```bash
+curl https://razorwire-api-production.up.railway.app/health
+```
+
+Expected:
+
+```json
+{"status":"ok"}
+```
+
+## Required Railway env vars
+
+Set on the `razorwire-api` service:
+
+```env
+PYTHON_VERSION=3.12.7
+WEB_ORIGIN=https://razorwire.aisites.razorpay.com
+PUBLIC_BASE_URL=https://razorwire-api-production.up.railway.app
+DEV_AUTH_EMAIL=aisites@razorpay.com
+DATABASE_URL=...
+SUPABASE_URL=https://bkizgcbhtdglxutwhvcl.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
+SUPABASE_STORAGE_BUCKET=razorwire-videos
+SUPABASE_STORAGE_PUBLIC=true
+MAX_UPLOAD_BYTES=52428800
+ANTHROPIC_MODEL=claude-sonnet-5
+ANTHROPIC_API_KEY=...
+```
+
+`ANTHROPIC_API_KEY` is only needed for AI generation. Video upload only needs the
+Supabase values.
+
+## Redeploy backend from local checkout
+
+```bash
+cd backend
+railway up --detach
+```
+
+`backend/railway.json` pins the FastAPI start command and healthcheck.
+
+## Redeploy AiSites frontend against Railway
+
+```bash
+export NEXT_PUBLIC_BACKEND_MODE=aisites
+export NEXT_PUBLIC_API_URL=https://razorwire-api-production.up.railway.app
+npm run build:aisites
+aisites deploy razorwire ./out --publish
+```
+
+Current AiSites URL:
+
+```txt
+https://razorwire.aisites.razorpay.com/
+```

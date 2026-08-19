@@ -94,6 +94,8 @@ For shared video uploads, create the Supabase Storage bucket named in
 
 For AiSites frontend hosting, see [`docs/AISITES.md`](docs/AISITES.md).
 For a public FastAPI backend on Render, see [`docs/RENDER.md`](docs/RENDER.md).
+For a public FastAPI backend on Railway without GitHub repo access, see
+[`docs/RAILWAY.md`](docs/RAILWAY.md).
 
 To prove cross-user consistency after pointing at Supabase:
 
