@@ -1,11 +1,12 @@
 """Database tables and session handling.
 
-SQLite, eight tables, no migrations. Reaction counts are derived with COUNT rather
-than kept in denormalised columns: at feed scale it is free, and a counter that
-cannot drift is one less thing to debug on demo day.
+Eight tables. Postgres is the shared-store path; SQLite stays the local fallback.
+Reaction counts are derived with COUNT rather than kept in denormalised columns: at
+feed scale it is free, and a counter that cannot drift is one less thing to debug on
+demo day.
 
-ponytail: SQLite + create_all, no Alembic. Add migrations when the schema has to
-survive a deploy rather than a `rm razorwire.db`.
+ponytail: SQLModel create_all, no Alembic. Add migrations when the schema has to
+survive real deploy history instead of a fresh hackathon database.
 """
 
 from __future__ import annotations
@@ -158,7 +159,7 @@ class Job(SQLModel, table=True):
 
 def _engine_kwargs(url: str) -> dict[str, Any]:
     if not url.startswith("sqlite"):
-        return {}
+        return {"pool_pre_ping": True}
     # background jobs and request handlers touch the same connection pool
     kwargs: dict[str, Any] = {"connect_args": {"check_same_thread": False}}
     # ":memory:" gives every new connection its own empty database, so tables created
@@ -168,7 +169,18 @@ def _engine_kwargs(url: str) -> dict[str, Any]:
     return kwargs
 
 
-_engine = create_engine(settings.database_url, echo=False, **_engine_kwargs(settings.database_url))
+def _database_url(raw: str) -> str:
+    if raw.startswith("postgresql+"):
+        return raw
+    if raw.startswith("postgresql://"):
+        return raw.replace("postgresql://", "postgresql+psycopg://", 1)
+    if raw.startswith("postgres://"):
+        return raw.replace("postgres://", "postgresql+psycopg://", 1)
+    return raw
+
+
+_database_url_value = _database_url(settings.database_url)
+_engine = create_engine(_database_url_value, echo=False, **_engine_kwargs(_database_url_value))
 
 
 def init_db() -> None:

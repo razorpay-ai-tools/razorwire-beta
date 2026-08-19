@@ -30,10 +30,31 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
 
+    # --- slack ingestion ------------------------------------------------------
+    #: Bot token (``xoxb-``). Needs scopes: channels:history, groups:history,
+    #: channels:read, users:read. The bot must also be invited to any channel it
+    #: reads — Slack returns `not_in_channel` otherwise.
+    slack_bot_token: str = ""
+    #: Channels we are allowed to ingest from, comma-separated ids or names. Empty
+    #: means none: an allow-list that defaults to "everything" is not an allow-list.
+    slack_allowed_channels: str = ""
+
+    @property
+    def slack_allow_list(self) -> frozenset[str]:
+        raw = (self.slack_allowed_channels or "").split(",")
+        return frozenset(part.strip().lstrip("#") for part in raw if part.strip())
+
     # --- storage --------------------------------------------------------------
     #: Uploads land here. ponytail: local disk only. Swap for S3 presigned PUT when
     #: more than one box serves the feed.
+    #:
+    #: PUBLICLY SERVED at /media. Only finished artefacts belong here.
     media_dir: str = "./.storage"
+
+    #: Scratch space for one generation run: storyboard.json, scene wavs, scene pngs.
+    #: Deliberately NOT mounted at a URL — it holds intermediate work derived from
+    #: internal documents, and only the finished MP4 is copied into media_dir.
+    work_dir: str = "./.work"
 
     @property
     def dev_auth_enabled(self) -> bool:

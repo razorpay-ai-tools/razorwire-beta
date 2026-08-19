@@ -180,6 +180,29 @@ def test_post_like_save_comment_view_roundtrip(client):
     assert fetched["storyboard"]["meta"]["tags"] == ["upi", "mandates", "architecture"]
 
 
+def test_second_dev_user_reaction_is_visible_to_first_user(client):
+    user_1 = {"x-dev-email": "viewer-one@razorpay.com"}
+    user_2 = {"x-dev-email": "viewer-two@razorpay.com"}
+    created = client.post(
+        "/posts",
+        headers=user_1,
+        json={"title": "shared state", "kind": "clip", "mediaUrl": "/media/x.mp4"},
+    ).json()
+
+    assert client.post(f"/posts/{created['id']}/like", headers=user_2).json() == {"active": True, "count": 1}
+    comment = client.post(
+        f"/posts/{created['id']}/comments",
+        headers=user_2,
+        json={"text": "visible across users"},
+    ).json()
+
+    fetched = client.get(f"/posts/{created['id']}", headers=user_1).json()
+    assert comment["author"]["email"] == "viewer-two@razorpay.com"
+    assert fetched["likes"] == 1
+    assert fetched["comments"] == 1
+    assert fetched["liked"] is False
+
+
 def test_feed_paginates_without_repeating_rows(client):
     for i in range(5):
         client.post("/posts", json={"title": f"clip {i}", "kind": "clip", "mediaUrl": "/media/x.mp4"})

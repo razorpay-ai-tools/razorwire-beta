@@ -24,24 +24,66 @@ Repo: [`razorpay-ai-tools/razorwire-beta`](https://github.com/razorpay-ai-tools/
 
 ## Run it
 
-Two processes. Node serves the web app, Python serves the API.
+One command starts both servers:
 
 ```bash
-# 1. backend  (http://localhost:8000, OpenAPI at /docs)
-cd backend
-cp ../.env.example .env                      # then fill ANTHROPIC_API_KEY
-echo 'DEV_AUTH_EMAIL=you@razorpay.com' >> .env
-uv sync
-uv run python scripts/seed.py                # sample channels, posts and follows
-uv run uvicorn app.main:app --reload --port 8000
-
-# 2. web app  (http://localhost:3000)
-npm install
-npm run dev
+npm run dev:all
 ```
 
-`DEV_AUTH_EMAIL` is the local auth bypass. Unset, the API requires a Google ID token
-restricted to the `razorpay.com` hosted domain.
+It creates missing local env files, installs missing dependencies, then starts:
+
+- web app: `http://localhost:3000`
+- backend API: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+
+Requires `node`, `npm`, and `python3`. Python 3.12 is preferred; the local
+launcher also works with macOS Python 3.9 by installing the annotation backport
+listed in `backend/requirements.txt`.
+
+Config files:
+
+- copy `backend/.env.example` to `backend/.env`
+- copy `.env.example` to `.env.local`
+
+`backend/.env`:
+
+```env
+DATABASE_URL=sqlite:///./razorwire.db
+WEB_ORIGIN=http://localhost:3000
+DEV_AUTH_EMAIL=you@razorpay.com
+GOOGLE_CLIENT_ID=
+ALLOWED_HD=razorpay.com
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-5
+MEDIA_DIR=./.storage
+```
+
+`.env.local`:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+`DEV_AUTH_EMAIL` is the local auth bypass. Unset, the API requires a Google ID
+token restricted to the `razorpay.com` hosted domain.
+
+An empty database has an empty feed. Seed sample channels, posts and follows —
+idempotent, so re-running it adds nothing:
+
+```bash
+cd backend
+.venv/bin/python scripts/seed.py
+```
+
+For shared state, replace the default SQLite `DATABASE_URL` with a hosted Postgres URL
+from Supabase or Neon. See [`docs/STORAGE.md`](docs/STORAGE.md).
+
+To prove cross-user consistency after pointing at Supabase:
+
+```bash
+cd backend
+.venv/bin/python scripts/check_shared_storage.py
+```
 
 `scripts/seed.py` is idempotent and does not migrate. On a database that predates
 channels, either `rm backend/razorwire.db` or add the two columns in place:
@@ -112,7 +154,8 @@ backend/
   app/aidocs.py        fetch a doc by id, normalise to citable sections
   app/pipeline.py      Claude script stage; validation errors fed back for self-repair
   app/main.py          feed, posts, likes, saves, comments, views, uploads, jobs
-  app/models.py        eight SQLite tables; reaction counts derived, never denormalised
+  app/models.py        eight DB tables; reaction counts derived, never denormalised
+  scripts/seed.py      sample channels, posts and follows for an empty database
   tests/test_api.py    43 tests
 src/
   app/page.tsx         app shell — feed is the default view, create is a sheet over it
@@ -143,7 +186,13 @@ that failed to load.
   assigned a `clipId`, so scenes fall back to an accent gradient with no failed request.
 - **MP4 export unbuilt**, so the `voicing` and `rendering` job states never fire.
 - **Uploads go to local disk** through the app. Fine for one box; presign beyond that.
-- **No migrations.** `rm backend/razorwire.db` is the reset.
+- **No migrations.** Fresh DBs use `create_all`; add Alembic after the schema stabilises.
+  On a SQLite file that predates channels, either `rm backend/razorwire.db` or add the
+  two columns in place:
+  ```sql
+  ALTER TABLE users ADD COLUMN bio VARCHAR NOT NULL DEFAULT '';
+  ALTER TABLE posts ADD COLUMN channel_id VARCHAR;
+  ```
 - **`ink-subtle` is 3.7:1** against surface-1, under the floor for body text. It is for
   timestamps, hints and disabled states only — use `ink-muted` for secondary copy.
 - **Diagram legibility at 360px**: a 7-node vertical graph letterboxes to roughly 11px

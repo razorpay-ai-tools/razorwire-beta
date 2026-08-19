@@ -7,9 +7,10 @@ second hand-written definition that drifts.
     uv run python scripts/emit_contract.py
 
 Writes:
-    ../contracts/storyboard.schema.json     full JSON Schema (both stages)
-    ../contracts/tool_input.schema.json     what Claude is shown (pipeline fields stripped)
-    ../src/lib/storyboard.types.ts          TypeScript types for the renderer
+    ../contracts/storyboard.schema.json        full JSON Schema (both stages)
+    ../contracts/tool_input.schema.json        what Claude is shown (pipeline fields stripped)
+    ../contracts/render-storyboard.schema.json the file the MP4 renderer reads
+    ../src/lib/storyboard.types.ts             TypeScript types for the web app
 """
 
 from __future__ import annotations
@@ -107,9 +108,19 @@ def main() -> None:
     CONTRACTS.mkdir(parents=True, exist_ok=True)
     TYPES_OUT.parent.mkdir(parents=True, exist_ok=True)
 
+    # Generated from the same pydantic models we validate against, so the renderer's
+    # schema and our validator cannot disagree about their own contract.
+    from app.render_contract import RenderStoryboard
+
+    render_schema = RenderStoryboard.model_json_schema(by_alias=True)
+
     written = [
         (CONTRACTS / "storyboard.schema.json", json.dumps(json_schema(), indent=2) + "\n"),
         (CONTRACTS / "tool_input.schema.json", json.dumps(tool_input_schema(), indent=2) + "\n"),
+        (
+            CONTRACTS / "render-storyboard.schema.json",
+            json.dumps(render_schema, indent=2) + "\n",
+        ),
         (TYPES_OUT, ts_types()),
     ]
     for path, content in written:
