@@ -14,6 +14,7 @@ the wrong hosted domain is rejected rather than logged.
 from __future__ import annotations
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from .config import settings
@@ -69,6 +70,10 @@ def current_user(
     if user is None:
         user = User(email=profile["email"], name=profile["name"], picture=profile["picture"] or None)
         session.add(user)
-        session.commit()
-        session.refresh(user)
+        try:
+            session.commit()
+            session.refresh(user)
+        except IntegrityError:
+            session.rollback()
+            user = session.exec(select(User).where(User.email == profile["email"])).one()
     return user

@@ -53,8 +53,8 @@
   --color-warning: #f56d19;
   --color-danger: #df3e30;
 
-  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: var(--font-jetbrains-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --animate-fade-in: fade-in 220ms ease-out;
   --animate-pulse-ring: pulse-ring 1.6s ease-out infinite;
