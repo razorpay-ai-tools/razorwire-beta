@@ -79,9 +79,11 @@ def test_gemini_http_error_does_not_leak_api_key(monkeypatch):
         )
     except RuntimeError as exc:
         message = str(exc)
+        cause = exc.__cause__
     else:
         raise AssertionError("expected RuntimeError")
 
     assert "Gemini request failed with HTTP 404" in message
     assert "secret-key" not in message
     assert "key=" not in message
+    assert cause is None

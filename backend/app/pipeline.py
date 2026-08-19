@@ -281,7 +281,7 @@ def _run_gemini_script_stage(
                 detail = f": {detail[:500]}"
             raise RuntimeError(
                 f"Gemini request failed with HTTP {exc.response.status_code}{detail}"
-            ) from exc
+            ) from None
 
         try:
             candidate = _with_source(
