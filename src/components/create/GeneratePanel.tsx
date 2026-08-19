@@ -66,14 +66,10 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
     if (!docId) {
       return 'No doc id found. Paste an aidocs link like https://aidocs.razorpay.com/app/d/doc_… or the doc_… id on its own.';
     }
-    /*
-     * The id is the whole requirement. `_run_job` fetches the document itself and only
-     * falls back to this text if that fetch fails, so demanding it here made the primary
-     * path — paste a link, get an explainer — impossible, and the differentiator look like
-     * a copy-paste tool. `test_aidoc_generation_no_longer_requires_pasted_input` pins the
-     * server side of this.
-     */
     const input = docText.trim();
+    if (input.length < MIN_INPUT) {
+      return 'Production cannot read private aidocs directly yet. Paste the document body too, keeping headings for citation chips.';
+    }
     const trimmedRef = docRef.trim();
     const trimmedTitle = docTitle.trim();
     return {
@@ -232,7 +228,7 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
           <div>
             <div className="flex items-baseline justify-between gap-3">
               <label htmlFor="doc-text" className="block text-xs font-semibold text-neutral-300">
-                Document body <span className="font-normal text-neutral-500">(optional)</span>
+                Document body <span className="font-normal text-neutral-500">(required on production)</span>
               </label>
               <button
                 type="button"
@@ -246,15 +242,15 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
               id="doc-text"
               name="doc-text"
               className="input mt-1.5 min-h-48 resize-y leading-relaxed"
-              placeholder="Leave this empty. Paste the contents only if the server cannot reach the doc."
+              placeholder="Paste the aidoc contents here. Keep headings so citation chips point to real sections."
               value={docText}
               onChange={(event) => setDocText(event.target.value)}
               aria-describedby="doc-text-hint"
             />
             <p id="doc-text-hint" className="mt-1.5 text-[11px] text-neutral-500">
               {docText.trim().length
-                ? `${docText.trim().length} characters, used instead of fetching. Keep the headings in — they are what the citation chips point at.`
-                : 'The link is enough — the server reads the document itself. This is the fallback for when that fails, and it needs the headings kept in.'}
+                ? `${docText.trim().length} characters. Keep the headings in — they are what the citation chips point at.`
+                : 'Railway cannot run the local aidocs CLI, so production needs the body pasted here.'}
             </p>
           </div>
         </div>
