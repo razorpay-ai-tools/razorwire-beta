@@ -112,8 +112,8 @@ backend/
   app/aidocs.py        fetch a doc by id, normalise to citable sections
   app/pipeline.py      Claude script stage; validation errors fed back for self-repair
   app/main.py          feed, posts, likes, saves, comments, views, uploads, jobs
-  app/models.py        six SQLite tables; reaction counts derived, never denormalised
-  tests/test_api.py    35 tests
+  app/models.py        eight SQLite tables; reaction counts derived, never denormalised
+  tests/test_api.py    43 tests
 src/
   app/page.tsx         app shell — feed is the default view, create is a sheet over it
   components/feed/     THE FOCUS SCREEN — snap feed, both post variants
@@ -139,11 +139,13 @@ that failed to load.
 
 ## Known gaps
 
-- **No Veo clip library yet.** `brollSrc` points at `/broll/<mood>.mp4`; missing files
-  fall back to an accent gradient — the designed path, but it does log 404s.
+- **No Veo clip library yet.** `brollSrc` only requests a clip once the resolver has
+  assigned a `clipId`, so scenes fall back to an accent gradient with no failed request.
 - **MP4 export unbuilt**, so the `voicing` and `rendering` job states never fire.
 - **Uploads go to local disk** through the app. Fine for one box; presign beyond that.
 - **No migrations.** `rm backend/razorwire.db` is the reset.
+- **`ink-subtle` is 3.7:1** against surface-1, under the floor for body text. It is for
+  timestamps, hints and disabled states only — use `ink-muted` for secondary copy.
 - **Diagram legibility at 360px**: a 7-node vertical graph letterboxes to roughly 11px
   labels. Check on a real phone before trusting it; the node cap is what keeps it this
   side of readable.
