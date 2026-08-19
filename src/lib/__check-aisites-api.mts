@@ -48,9 +48,16 @@ globalThis.fetch = async (input, init) => {
     return row ? Response.json(row) : new Response('missing', { status: 404 });
   }
   if (method === 'PUT' && id) {
+    if (!rows.has(id)) return new Response('missing', { status: 404 });
     const body = JSON.parse(String(init?.body)) as Row;
     rows.set(id, { ...body, id });
     return Response.json(rows.get(id));
+  }
+  if (method === 'POST' && !id) {
+    const body = JSON.parse(String(init?.body)) as Row;
+    const row = { ...body, id: `row_${rows.size + 1}` };
+    rows.set(row.id, row);
+    return Response.json(row);
   }
   if (method === 'DELETE' && id) {
     rows.delete(id);

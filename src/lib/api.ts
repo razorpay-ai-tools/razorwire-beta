@@ -325,6 +325,15 @@ async function dbPut<T extends { id: string }>(collection: string, item: T): Pro
   return item;
 }
 
+async function dbCreate<T extends { id: string }>(collection: string, item: T): Promise<Stored<T>> {
+  return unwrap<T>(
+    await flash(`/__flash_db__/${collection}`, {
+      method: 'POST',
+      body: JSON.stringify(item),
+    }),
+  );
+}
+
 async function dbDelete(collection: string, id: string): Promise<void> {
   await flash<void>(`/__flash_db__/${collection}/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
@@ -345,7 +354,11 @@ function slugify(name: string): string {
 async function flashMe(): Promise<ApiUser> {
   const viewer = await flash<FlashViewer>('/__flash_me__');
   const id = viewer.id || viewer.email;
-  const profile = await dbGet<Partial<ApiUser>>('profiles', id);
+  const profile =
+    (await dbGet<Partial<ApiUser> & { userId?: string }>('profiles', id)) ??
+    (await dbList<Partial<ApiUser> & { userId?: string }>('profiles')).find(
+      (item) => item.userId === id || item.email === viewer.email,
+    );
   return {
     id,
     email: viewer.email,
@@ -439,7 +452,12 @@ const aisitesApi: ApiClient = {
 
   async updateMe(body) {
     const user = { ...(await flashMe()), ...body };
-    return dbPut('profiles', user);
+    const existing = (await dbList<Partial<ApiUser> & { userId?: string }>('profiles')).find(
+      (item) => item.userId === user.id || item.email === user.email,
+    );
+    if (existing) await dbPut('profiles', { ...existing, ...user, userId: user.id });
+    else await dbCreate('profiles', { ...user, userId: user.id });
+    return user;
   },
 
   async profile(userId) {
@@ -531,7 +549,7 @@ const aisitesApi: ApiClient = {
     if (channels.some((channel) => channel.slug === slug)) {
       throw new ApiError(409, `channel ${slug} already exists`);
     }
-    const channel = await dbPut<StoredChannel>('channels', {
+    const channel = await dbCreate<StoredChannel>('channels', {
       id: newId('chn'),
       slug,
       name: body.name.trim(),
@@ -539,7 +557,7 @@ const aisitesApi: ApiClient = {
       createdBy: user.id,
       createdAt: new Date().toISOString(),
     });
-    await dbPut<StoredReaction>('follows', {
+    await dbCreate<StoredReaction>('follows', {
       id: safeKey(user.id, channel.id),
       userId: user.id,
       channelId: channel.id,
@@ -553,10 +571,12 @@ const aisitesApi: ApiClient = {
     const channel = (await dbList<StoredChannel>('channels')).find((item) => item.slug === slug);
     if (!channel) throw new ApiError(404, 'channel not found');
     const id = safeKey(user.id, channel.id);
-    const existing = await dbGet<StoredReaction>('follows', id);
-    if (existing) await dbDelete('follows', id);
+    const existing = (await dbList<StoredReaction>('follows')).find(
+      (follow) => follow.userId === user.id && follow.channelId === channel.id,
+    );
+    if (existing) await dbDelete('follows', existing.id);
     else {
-      await dbPut<StoredReaction>('follows', {
+      await dbCreate<StoredReaction>('follows', {
         id,
         userId: user.id,
         channelId: channel.id,
@@ -578,7 +598,7 @@ const aisitesApi: ApiClient = {
     if (body.kind === 'generated' && !body.storyboard) throw new ApiError(422, 'generated posts need a storyboard');
     if (body.kind === 'clip' && !body.mediaUrl) throw new ApiError(422, 'clip posts need a mediaUrl');
     const user = await flashMe();
-    const post = await dbPut<StoredPost>('posts', {
+    const post = await dbCreate<StoredPost>('posts', {
       ...body,
       id: newId('post'),
       authorId: user.id,
@@ -596,9 +616,11 @@ const aisitesApi: ApiClient = {
   async toggleLike(id) {
     const user = await flashMe();
     const key = safeKey(user.id, id);
-    const existing = await dbGet<StoredReaction>('likes', key);
-    if (existing) await dbDelete('likes', key);
-    else await dbPut<StoredReaction>('likes', { id: key, userId: user.id, postId: id, createdAt: new Date().toISOString() });
+    const existing = (await dbList<StoredReaction>('likes')).find(
+      (like) => like.userId === user.id && like.postId === id,
+    );
+    if (existing) await dbDelete('likes', existing.id);
+    else await dbCreate<StoredReaction>('likes', { id: key, userId: user.id, postId: id, createdAt: new Date().toISOString() });
     const count = (await dbList<StoredReaction>('likes')).filter((like) => like.postId === id).length;
     return { active: !existing, count };
   },
@@ -606,9 +628,11 @@ const aisitesApi: ApiClient = {
   async toggleSave(id) {
     const user = await flashMe();
     const key = safeKey(user.id, id);
-    const existing = await dbGet<StoredReaction>('saves', key);
-    if (existing) await dbDelete('saves', key);
-    else await dbPut<StoredReaction>('saves', { id: key, userId: user.id, postId: id, createdAt: new Date().toISOString() });
+    const existing = (await dbList<StoredReaction>('saves')).find(
+      (save) => save.userId === user.id && save.postId === id,
+    );
+    if (existing) await dbDelete('saves', existing.id);
+    else await dbCreate<StoredReaction>('saves', { id: key, userId: user.id, postId: id, createdAt: new Date().toISOString() });
     const count = (await dbList<StoredReaction>('saves')).filter((save) => save.postId === id).length;
     return { active: !existing, count };
   },
@@ -630,7 +654,7 @@ const aisitesApi: ApiClient = {
 
   async addComment(id, text) {
     const user = await flashMe();
-    const comment = await dbPut<StoredComment>('comments', {
+    const comment = await dbCreate<StoredComment>('comments', {
       id: newId('cmt'),
       postId: id,
       authorId: user.id,
