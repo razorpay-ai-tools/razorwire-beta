@@ -25,9 +25,17 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-5"
 
     # --- storage --------------------------------------------------------------
-    #: Uploads land here. ponytail: local disk only. Swap for S3 presigned PUT when
-    #: more than one box serves the feed.
+    #: Uploads land here when Supabase Storage is not configured.
     media_dir: str = "./.storage"
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_storage_bucket: str = "razorwire-videos"
+    supabase_storage_public: bool = True
+    max_upload_bytes: int = 50 * 1024 * 1024
+
+    @property
+    def supabase_storage_enabled(self) -> bool:
+        return bool(self.supabase_url and self.supabase_service_role_key and self.supabase_storage_bucket)
 
     @property
     def dev_auth_enabled(self) -> bool:

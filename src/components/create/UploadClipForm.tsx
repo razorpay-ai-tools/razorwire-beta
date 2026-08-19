@@ -18,7 +18,7 @@ import { Icon } from '@/components/ui';
 const ALLOWED_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v'] as const;
 
 /** ponytail: client-side only — the binary is proxied through the app onto local disk. */
-const MAX_BYTES = 200 * 1024 * 1024;
+const MAX_BYTES = 50 * 1024 * 1024;
 
 const CATEGORIES = ['Product', 'Architecture', 'Culture', 'Onboarding', 'Incident'] as const;
 
@@ -124,11 +124,12 @@ export function UploadClipForm({ onPublished }: { onPublished: (postId: string) 
     setError(null);
     setPhase('uploading');
     try {
-      const { mediaUrl } = await api.upload(file);
+      const { mediaUrl, storageKey } = await api.upload(file);
       setPhase('publishing');
       const post = await api.createPost({
         kind: 'clip',
         mediaUrl,
+        storageKey,
         title: title.trim(),
         team: team.trim(),
         category,

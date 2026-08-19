@@ -33,6 +33,8 @@ export interface Post {
   accent: string;
   kind: PostKind;
   mediaUrl: string | null;
+  storageKey: string | null;
+  thumbnailUrl: string | null;
   durationMs: number | null;
   storyboard: Storyboard | null;
   sourceDocId: string | null;
@@ -99,6 +101,8 @@ export interface CreatePostRequest {
   tags?: string[];
   kind: PostKind;
   mediaUrl?: string;
+  storageKey?: string;
+  thumbnailUrl?: string;
   durationMs?: number;
   storyboard?: Storyboard;
   sourceDocId?: string;
@@ -166,7 +170,7 @@ export const api = {
   upload: (file: File) => {
     const form = new FormData();
     form.append('file', file);
-    return request<{ mediaUrl: string }>('/uploads', { method: 'POST', body: form });
+    return request<{ mediaUrl: string; storageKey: string }>('/uploads', { method: 'POST', body: form });
   },
 
   generate: (body: GenerateRequest) =>
