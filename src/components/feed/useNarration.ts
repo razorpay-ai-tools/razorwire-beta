@@ -67,6 +67,16 @@ export function primeSpeech(): void {
   }
 }
 
+/**
+ * How long to give Chrome to actually start speaking before retrying without a voice.
+ *
+ * Chrome will accept an utterance that names a specific voice, fire no `start`, no `end`
+ * and no `error`, and simply never speak — reported here as narration working in Safari
+ * and silent in Chrome. Dropping `utterance.voice` and letting Chrome use its own default
+ * speaks reliably, so the retry trades the nicer voice for one that exists.
+ */
+const START_TIMEOUT_MS = 700;
+
 /** Dev-only trace. The failure modes here are all invisible: no error, no sound. */
 function trace(...parts: unknown[]): void {
   if (process.env.NODE_ENV !== 'production') console.debug('[narration]', ...parts);
@@ -144,19 +154,23 @@ export function useNarration({ text, enabled, rate, onDone }: NarrationOptions):
 
     let cancelled = false;
     let watchdog = 0;
+    let startTimer = 0;
+    let started = false;
 
     function finish() {
       if (cancelled) return;
       window.clearTimeout(watchdog);
+      window.clearTimeout(startTimer);
       onDoneRef.current();
     }
 
-    function startSpeaking() {
+    /** @param withVoice false on the retry: Chrome's own default voice, no preference. */
+    function startSpeaking(withVoice = true) {
       if (cancelled) return;
 
       const utterance = new SpeechSynthesisUtterance(speakableText(line));
       const voices = speech.getVoices();
-      const voice = pickVoice(voices);
+      const voice = withVoice ? pickVoice(voices) : null;
       if (voice) utterance.voice = voice;
 
       trace('speak', {
@@ -168,7 +182,27 @@ export function useNarration({ text, enabled, rate, onDone }: NarrationOptions):
         paused: speech.paused,
         text: speakableText(line).slice(0, 60),
       });
-      utterance.onstart = () => trace('started');
+
+      utterance.onstart = () => {
+        started = true;
+        window.clearTimeout(startTimer);
+        trace('started');
+      };
+
+      /*
+       * Chrome accepts an utterance that names a voice, then never speaks it and never
+       * fires anything — Safari plays the same line correctly. One retry on Chrome's own
+       * default voice fixes it; a worse voice out loud beats a better one in silence.
+       */
+      if (withVoice) {
+        startTimer = window.setTimeout(() => {
+          if (cancelled || started) return;
+          trace('never started — retrying on the default voice');
+          speech.cancel();
+          startSpeaking(false);
+        }, START_TIMEOUT_MS);
+      }
+
       utterance.rate = rate;
       // Slightly under the default. At 1.0 the neural voices land every sentence on the
       // same note, which is the thing that reads as synthetic more than the timbre does.
@@ -213,12 +247,15 @@ export function useNarration({ text, enabled, rate, onDone }: NarrationOptions):
      * promise first — even an already-resolved one — puts the call in a later microtask
      * where that activation is gone, so the unmute click produced silence with no error.
      */
+    // `() => startSpeaking()` not a bare reference: `then` would hand the resolved value
+    // in as `withVoice`, which is `undefined` today and a bug the moment it is not.
     if (speech.getVoices().length > 0) startSpeaking();
-    else void whenVoicesReady(speech).then(startSpeaking);
+    else void whenVoicesReady(speech).then(() => startSpeaking());
 
     return () => {
       cancelled = true;
       window.clearTimeout(watchdog);
+      window.clearTimeout(startTimer);
       speech.cancel();
     };
   }, [text, enabled, rate]);
