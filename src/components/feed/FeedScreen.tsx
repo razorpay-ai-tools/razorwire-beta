@@ -49,7 +49,9 @@ function readCachedFeed(key: string): FeedPage | null {
     const cached = localStorage.getItem(key);
     if (!cached) return null;
     const page = JSON.parse(cached) as FeedPage;
-    return Array.isArray(page.items) ? page : null;
+    if (!Array.isArray(page.items)) return null;
+    if (page.items.some((post) => !post?.id || !post.author)) return null;
+    return page;
   } catch {
     return null;
   }

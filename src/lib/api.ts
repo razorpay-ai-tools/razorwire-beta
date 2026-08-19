@@ -351,6 +351,18 @@ function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
+function safeUser(user: Partial<ApiUser> | undefined, fallbackId: string): ApiUser {
+  const id = user?.id || fallbackId || 'unknown';
+  const email = user?.email || id;
+  return {
+    id,
+    email,
+    name: user?.name || email.split('@')[0],
+    picture: user?.picture ?? null,
+    bio: user?.bio ?? '',
+  };
+}
+
 async function flashMe(): Promise<ApiUser> {
   const viewer = await flash<FlashViewer>('/__flash_me__');
   const id = viewer.id || viewer.email;
@@ -392,7 +404,7 @@ function postOut(
     sourceDocId: post.sourceDocId ?? null,
     views: post.views ?? 0,
     createdAt: post.createdAt,
-    author: post.author,
+    author: safeUser(post.author, post.authorId),
     channel,
     likes: counts.likes,
     saves: counts.saves,
@@ -466,7 +478,7 @@ const aisitesApi: ApiClient = {
       dbList<StoredChannel>('channels'),
       dbList<StoredReaction>('follows'),
     ]);
-    const subject = posts.find((post) => post.author.id === userId)?.author
+    const subject = posts.find((post) => post.author?.id === userId)?.author
       ?? (await dbGet<Partial<ApiUser>>('profiles', userId))
       ?? { id: userId, email: userId, name: userId, picture: null, bio: '' };
     const followed = channels.filter((channel) =>
@@ -649,7 +661,12 @@ const aisitesApi: ApiClient = {
     return (await dbList<StoredComment>('comments'))
       .filter((comment) => comment.postId === id)
       .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
-      .map(({ id, text, author, createdAt }) => ({ id, text, author, createdAt }));
+      .map(({ id, text, author, authorId, createdAt }) => ({
+        id,
+        text,
+        author: safeUser(author, authorId),
+        createdAt,
+      }));
   },
 
   async addComment(id, text) {
@@ -742,7 +759,7 @@ export function brollSrc(scene: Scene): string | null {
 }
 
 export function initialsOf(user: Pick<ApiUser, 'name' | 'email'>): string {
-  const source = user.name || user.email;
+  const source = user?.name || user?.email || '?';
   const parts = source.split(/[.\s@_-]+/).filter(Boolean);
   return (parts[0]?.[0] ?? '?').concat(parts[1]?.[0] ?? '').toUpperCase();
 }
