@@ -38,7 +38,7 @@ from .auth import current_user
 from .config import settings
 from .models import Comment, Job, Like, Post, Save, User, get_session, init_db, utcnow
 from .pipeline import run_script_stage, storyboard_to_json
-from .render_contract import RenderContractInvalid, emit
+from .render_contract import RenderContractInvalid, emit, write_bundle
 from .slack import SlackUnavailable, fetch_thread, parse_permalink
 from .storyboard import Storyboard, StoryboardInvalid
 
@@ -465,7 +465,23 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
                 doc_url=doc_url,
             )
 
+            # Stored in our INTERNAL shape: the feed's scene components dispatch on
+            # `scene.type` and read `cite`, so this column must never hold the render
+            # contract's `visual.kind` shape. See render_contract.py.
             job.storyboard = storyboard_to_json(storyboard)
+
+            # The handoff. Steps 3 and 4 run on the same box, so the seam is a file on
+            # disk, not an HTTP call to our own API. Written even on the browser-reel
+            # path, so the voice and render stages have something to pick up whenever
+            # they are wired in, and so a bad projection surfaces now rather than later.
+            try:
+                write_bundle(job.id, storyboard)
+            except RenderContractInvalid as invalid:
+                # Not fatal: the browser reel plays from job.storyboard regardless. But
+                # it means this storyboard cannot become an MP4, and silence here would
+                # turn that into a mystery during rendering.
+                log.error("job %s cannot be rendered to MP4: %s", job_id, invalid.errors)
+
             job.state, job.progress = "published", 100
         except StoryboardInvalid as invalid:
             job.state, job.error = "failed", "; ".join(invalid.errors)

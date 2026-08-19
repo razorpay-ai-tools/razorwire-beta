@@ -60,3 +60,7 @@ backend/__pycache__/
 
 # stray tool artifacts
 tmp/
+
+# generation scratch (storyboard.json, scene wavs/pngs, pre-copy mp4)
+/backend/.work
+/.work

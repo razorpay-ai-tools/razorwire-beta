@@ -264,3 +264,61 @@ def test_storyboard_json_404s_for_a_clip_post(client) -> None:
 
 def test_storyboard_json_404s_for_an_unknown_post(client) -> None:
     assert client.get("/posts/post_missing/storyboard.json").status_code == 404
+
+
+# --------------------------------------------------------------- the on-disk handoff
+# Steps 3 and 4 of the architecture run on the same box, so the seam is a file.
+
+
+def test_write_bundle_puts_the_file_where_the_voice_stage_looks(
+    sb: internal.Storyboard, tmp_path, monkeypatch
+) -> None:
+    from app.config import settings as live
+
+    monkeypatch.setattr(live, "work_dir", str(tmp_path))
+    path = rc.write_bundle("job_abc", sb)
+
+    assert path == tmp_path / "job_abc" / "storyboard.json"
+    written = json.loads(path.read_text())
+    rc.validate_render_storyboard(written)
+    assert written["schemaVersion"] == rc.SCHEMA_VERSION
+
+
+def test_the_work_dir_is_not_the_publicly_served_media_dir() -> None:
+    """Intermediate work derived from internal documents must not be reachable by URL."""
+    from app.config import settings as live
+
+    assert live.work_dir != live.media_dir
+
+
+# --------------------------------------------------------- the two shapes must not mix
+# The trap this guards: step 5a screenshots our OWN web app, whose scene components
+# dispatch on internal `scene.type`. Step 6 then writes Post(storyboard=...). If the
+# render contract's `visual.kind` shape ever lands in that column, every scene falls
+# through to UnsupportedScene and `docHref` returns null — a feed of blank frames with
+# nothing raising an error anywhere.
+
+
+def test_the_render_file_is_not_a_valid_internal_storyboard(wire: dict) -> None:
+    """Storing storyboard.json in Post.storyboard must fail loudly, not silently."""
+    with pytest.raises(internal.StoryboardInvalid):
+        internal.validate_storyboard(wire, stage="script")
+
+
+def test_an_internal_storyboard_is_not_a_valid_render_file(sb: internal.Storyboard) -> None:
+    """And the reverse, so neither can be mistaken for the other."""
+    from app.pipeline import storyboard_to_json
+
+    with pytest.raises(rc.RenderContractInvalid):
+        rc.validate_render_storyboard(storyboard_to_json(sb))
+
+
+def test_the_two_shapes_are_distinguishable_by_a_single_field(
+    sb: internal.Storyboard, wire: dict
+) -> None:
+    """`type` vs `visual.kind` — enough for a renderer to assert which it was handed."""
+    from app.pipeline import storyboard_to_json
+
+    internal_json = storyboard_to_json(sb)
+    assert all("type" in scene and "visual" not in scene for scene in internal_json["scenes"])
+    assert all("visual" in scene and "type" not in scene for scene in wire["scenes"])

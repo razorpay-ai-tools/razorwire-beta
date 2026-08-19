@@ -41,7 +41,14 @@ class Settings(BaseSettings):
     # --- storage --------------------------------------------------------------
     #: Uploads land here. ponytail: local disk only. Swap for S3 presigned PUT when
     #: more than one box serves the feed.
+    #:
+    #: PUBLICLY SERVED at /media. Only finished artefacts belong here.
     media_dir: str = "./.storage"
+
+    #: Scratch space for one generation run: storyboard.json, scene wavs, scene pngs.
+    #: Deliberately NOT mounted at a URL — it holds intermediate work derived from
+    #: internal documents, and only the finished MP4 is copied into media_dir.
+    work_dir: str = "./.work"
 
     @property
     def dev_auth_enabled(self) -> bool:

@@ -33,14 +33,16 @@ source document. It belongs with the internal validator.
 
 from __future__ import annotations
 
+import json
 import logging
-
+from pathlib import Path
 from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 from . import storyboard as internal
+from .config import settings
 
 log = logging.getLogger(__name__)
 
@@ -295,9 +297,35 @@ def from_storyboard(
 
 def to_json(sb: RenderStoryboard) -> dict:
     """The file, as a camelCase dict. ``exclude_none`` keeps optionals out entirely."""
-    import json
-
     return json.loads(sb.model_dump_json(by_alias=True, exclude_none=True))
+
+
+def write_bundle(job_id: str, sb: internal.Storyboard) -> Path:
+    """Write ``storyboard.json`` where the voice and render stages will look for it.
+
+    The handoff in the architecture is literally one file, and steps 3 and 4 run on
+    the same box, so a file on disk is the seam — not an HTTP round trip to our own
+    API. The voice stage reads this, writes ``scene<N>.wav`` beside it, and the render
+    stage writes ``scene<N>.png`` and ``video.mp4`` in the same directory.
+
+        <work_dir>/<job_id>/storyboard.json    <- this
+                            scene1.wav ...      <- voice stage
+                            scene1.png ...      <- render stage
+                            video.mp4           <- render stage, then copied to media
+
+    The directory is not served at any URL: it holds intermediate work derived from
+    internal documents, and only the finished MP4 belongs in ``media_dir``.
+
+    :returns: the path written
+    :raises RenderContractInvalid: rather than writing a file the renderer will reject
+    """
+    payload, warnings = emit(sb)
+    directory = Path(settings.work_dir) / job_id
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "storyboard.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    log.info("wrote %s (%d scenes, %d warning(s))", path, len(payload["scenes"]), len(warnings))
+    return path
 
 
 def emit(sb: internal.Storyboard) -> tuple[dict, list[str]]:
