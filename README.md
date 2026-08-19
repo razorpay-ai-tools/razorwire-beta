@@ -40,10 +40,12 @@ Requires `node`, `npm`, and `python3`. Python 3.12 is preferred; the local
 launcher also works with macOS Python 3.9 by installing the annotation backport
 listed in `backend/requirements.txt`.
 
-Config files:
+First run creates:
 
-- copy `backend/.env.example` to `backend/.env`
-- copy `.env.example` to `.env.local`
+- `backend/.env`
+- `.env.local`
+
+Add secrets only to `backend/.env`, then rerun `npm run dev:all`.
 
 `backend/.env`:
 
@@ -56,6 +58,11 @@ ALLOWED_HD=razorpay.com
 ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=claude-sonnet-5
 MEDIA_DIR=./.storage
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_STORAGE_BUCKET=razorwire-videos
+SUPABASE_STORAGE_PUBLIC=true
+MAX_UPLOAD_BYTES=52428800
 ```
 
 `.env.local`:
@@ -69,6 +76,9 @@ token restricted to the `razorpay.com` hosted domain.
 
 For shared state, replace the default SQLite `DATABASE_URL` with a hosted Postgres URL
 from Supabase or Neon. See [`docs/STORAGE.md`](docs/STORAGE.md).
+
+For shared video uploads, create the Supabase Storage bucket named in
+`SUPABASE_STORAGE_BUCKET` and set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`.
 
 To prove cross-user consistency after pointing at Supabase:
 
