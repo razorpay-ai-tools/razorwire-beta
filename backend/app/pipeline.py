@@ -33,7 +33,10 @@ from .storyboard import (
 log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
-_MAX_SOURCE_CHARS = 60_000
+# ponytail: cap prompt size to keep the gateway request under its timeout; add a
+# document summarisation stage only if truncating source proves insufficient.
+_MAX_SOURCE_CHARS = 32_000
+_LLM_TIMEOUT_SECONDS = 180.0
 
 _SYSTEM = f"""You turn internal Razorpay engineering documents into 60-second vertical explainer videos.
 
@@ -205,7 +208,12 @@ def run_script_stage(
     # The gateway serves Anthropic's `/v1/messages` shape for every model it routes, so
     # the only difference from talking to Anthropic directly is where it points. An empty
     # base URL means exactly that: talk to Anthropic directly.
-    client = Anthropic(api_key=settings.llm_api_key, base_url=settings.llm_base_url or None)
+    client = Anthropic(
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url or None,
+        timeout=_LLM_TIMEOUT_SECONDS,
+        max_retries=0,
+    )
     tool = {
         "name": _TOOL_NAME,
         "description": "Emit the finished storyboard.",
@@ -227,7 +235,7 @@ def run_script_stage(
             # glm-5p2 is a reasoning model: its thinking block alone can eat 4096 tokens
             # (the video brief reliably did), leaving stop_reason=max_tokens and an empty
             # reply. The budget must cover thinking AND the storyboard.
-            max_tokens=16384,
+            max_tokens=8192,
             system=_system_prompt(),
             tools=[tool],
             tool_choice={"type": "tool", "name": _TOOL_NAME},

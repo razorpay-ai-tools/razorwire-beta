@@ -42,6 +42,18 @@ class Settings(BaseSettings):
     #: since the gateway speaks the same wire format either way.
     llm_model: str = "glm-5p2"
 
+    # --- aidocs ingestion -----------------------------------------------------
+    aidocs_server: str = "https://aidocs.razorpay.com"
+    #: Service-account key from `aidocs sa key create <sa_id>`.
+    #:
+    #: Set it anywhere that is not a developer laptop. Unset, `aidocs.py` falls back to
+    #: the `aidocs` CLI's own Google session — which does not exist in a container, and
+    #: is why the hosted backend answered `api 401 unauthorized` for every document.
+    #:
+    #: A personal token also works and is the wrong choice: it reads with that person's
+    #: permissions and dies when they leave.
+    aidocs_token: str = ""
+
     # --- slack ingestion ------------------------------------------------------
     #: Bot token (``xoxb-``). Read-only: the integration calls conversations.replies,
     #: conversations.info and users.info over GET and nothing else, so the scopes are

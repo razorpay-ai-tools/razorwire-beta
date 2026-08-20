@@ -12,9 +12,19 @@ Two things this has to get right:
 2. **No dependencies.** ``html.parser`` from the standard library. A single-file HTML
    document with inline ``<style>`` does not need an HTML5 tree builder.
 
-ponytail: fetches by shelling out to the `aidocs` CLI, which is already installed and
-authenticated on every dev machine. The production path is a service-account bearer
-token against the HTTP API — swap `_pull_html` when this runs anywhere shared.
+Two fetch paths, and the reason there are two:
+
+    AIDOCS_TOKEN set     HTTP against /v1/documents/... with a service-account key.
+                         The only one that works in a container.
+    AIDOCS_TOKEN unset   shell out to the `aidocs` CLI, which already holds a Google
+                         session on a developer laptop. Nicer locally: no token to
+                         mint, no env var to set.
+
+The CLI path is why the hosted backend answered ``api 401 unauthorized`` for every
+document: a container has no ``~/.config/aidocs/config.json``, so the CLI had no
+credential to inherit. The HTTP path also reports the version id and the server's
+``sha256``, which the CLI cannot, so a published explainer can notice its source
+document moving underneath it.
 """
 
 from __future__ import annotations
@@ -22,8 +32,12 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from html.parser import HTMLParser
+
+import httpx
+
+from .config import settings
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +80,10 @@ class DocContent:
     doc_id: str
     title: str
     sections: tuple[Section, ...]
+    #: Which version this content came from, and the server's hash of it. Both are
+    #: None on the CLI path, which cannot report them.
+    version_id: str | None = None
+    source_sha256: str | None = None
 
     @property
     def url(self) -> str:
@@ -215,12 +233,86 @@ def parse_doc_html(doc_id: str, html: str) -> DocContent:
     return content
 
 
-def _pull_html(doc_id: str) -> str:
+@dataclass(frozen=True)
+class PulledDoc:
+    """Raw HTML plus the provenance needed to notice the document changing."""
+
+    html: str
+    version_id: str | None = None
+    #: The server's own hash of this version. Cheap staleness detection: store it with
+    #: the post, compare on the next poll, regenerate when it moves.
+    sha256: str | None = None
+
+
+def _api(path: str, *, token: str) -> httpx.Response:
+    url = f"{settings.aidocs_server.rstrip('/')}/v1{path}"
+    try:
+        response = httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            timeout=_FETCH_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        )
+    except httpx.HTTPError as exc:
+        raise AidocsUnavailable(f"aidocs {path} failed: {exc}") from exc
+
+    if response.status_code == 401:
+        raise AidocsUnavailable(
+            "aidocs rejected the token. Check AIDOCS_TOKEN — a service-account key from "
+            "`aidocs sa key create <sa_id>`, not a personal CLI session."
+        )
+    if response.status_code == 403:
+        raise AidocsUnavailable(
+            f"the service account is not allowed to read that document ({path}). "
+            "Grant it access, or use a document shared with the org."
+        )
+    if response.status_code == 404:
+        raise AidocsUnavailable(f"aidocs has no such document or version ({path})")
+    if response.status_code >= 400:
+        raise AidocsUnavailable(f"aidocs {path} returned HTTP {response.status_code}")
+    return response
+
+
+def _pull_over_http(doc_id: str, token: str) -> PulledDoc:
+    """Fetch the current version's HTML over the API.
+
+    Two calls, and the first one is not waste: ``/versions`` is where the version id
+    and the server's ``sha256`` come from, which is what lets us tell later that a
+    document moved under a published explainer.
+    """
+    versions = _api(f"/documents/{doc_id}/versions", token=token).json()
+    items = versions if isinstance(versions, list) else versions.get("items", [])
+    if not items:
+        raise AidocsUnavailable(f"{doc_id} has no versions")
+
+    current = max(items, key=lambda v: v.get("number", 0))
+    version_id = current.get("id")
+    html = _api(f"/documents/{doc_id}/versions/{version_id}/html", token=token).text
+    if not html.strip():
+        raise AidocsUnavailable(f"{doc_id} version {version_id} is empty")
+    return PulledDoc(html=html, version_id=version_id, sha256=current.get("sha256"))
+
+
+def _pull_over_cli(doc_id: str) -> PulledDoc:
+    """Fallback for a developer laptop, where the CLI already holds a Google session.
+
+    Kept because it is genuinely nicer locally: no token to mint, no env var to set.
+    It cannot work in a container — there is no ``~/.config/aidocs/config.json`` there,
+    which is exactly how the hosted backend ended up answering `api 401 unauthorized`
+    for every document.
+    """
     if shutil.which("aidocs") is None:
-        raise AidocsUnavailable("the aidocs CLI is not on PATH")
+        raise AidocsUnavailable(
+            "no AIDOCS_TOKEN is set and the aidocs CLI is not on PATH. Set AIDOCS_TOKEN "
+            "to a service-account key for anything that is not a developer laptop."
+        )
+    command = ["aidocs"]
+    if settings.aidocs_server:
+        command += ["--server", settings.aidocs_server]
+    command += ["docs", "pull", doc_id]
     try:
         result = subprocess.run(  # noqa: S603 - fixed argv, doc_id is validated by the caller
-            ["aidocs", "docs", "pull", doc_id],
+            command,
             capture_output=True,
             text=True,
             timeout=_FETCH_TIMEOUT_SECONDS,
@@ -233,7 +325,15 @@ def _pull_html(doc_id: str) -> str:
 
     if not result.stdout.strip():
         raise AidocsUnavailable("aidocs returned an empty document")
-    return result.stdout
+    return PulledDoc(html=result.stdout)
+
+
+def _pull(doc_id: str) -> PulledDoc:
+    """HTTP when we hold a token, CLI when we do not."""
+    if settings.aidocs_token:
+        return _pull_over_http(doc_id, settings.aidocs_token)
+    log.info("no AIDOCS_TOKEN set, falling back to the aidocs CLI session")
+    return _pull_over_cli(doc_id)
 
 
 def fetch_doc(doc_id: str) -> DocContent:
@@ -243,4 +343,6 @@ def fetch_doc(doc_id: str) -> DocContent:
     """
     if not doc_id.startswith("doc_") or not doc_id[4:].isalnum():
         raise AidocsUnavailable(f"{doc_id!r} is not a valid aidocs document id")
-    return parse_doc_html(doc_id, _pull_html(doc_id))
+    pulled = _pull(doc_id)
+    content = parse_doc_html(doc_id, pulled.html)
+    return replace(content, version_id=pulled.version_id, source_sha256=pulled.sha256)
