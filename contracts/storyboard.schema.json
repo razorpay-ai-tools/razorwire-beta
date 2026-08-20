@@ -89,6 +89,19 @@
           "description": "PIPELINE-SET. Derived from the measured length of this scene's narration audio. Never set this.",
           "title": "Durationms"
         },
+        "audioUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PIPELINE-SET. URL of this scene's pre-generated narration audio, played by the browser reel instead of speech synthesis. Never set this.",
+          "title": "Audiourl"
+        },
         "type": {
           "const": "bullets",
           "title": "Type",
@@ -170,6 +183,19 @@
           "default": null,
           "description": "PIPELINE-SET. Derived from the measured length of this scene's narration audio. Never set this.",
           "title": "Durationms"
+        },
+        "audioUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PIPELINE-SET. URL of this scene's pre-generated narration audio, played by the browser reel instead of speech synthesis. Never set this.",
+          "title": "Audiourl"
         },
         "type": {
           "const": "code",
@@ -303,6 +329,19 @@
           "description": "PIPELINE-SET. Derived from the measured length of this scene's narration audio. Never set this.",
           "title": "Durationms"
         },
+        "audioUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PIPELINE-SET. URL of this scene's pre-generated narration audio, played by the browser reel instead of speech synthesis. Never set this.",
+          "title": "Audiourl"
+        },
         "type": {
           "const": "compare",
           "title": "Type",
@@ -380,6 +419,19 @@
           "description": "PIPELINE-SET. Derived from the measured length of this scene's narration audio. Never set this.",
           "title": "Durationms"
         },
+        "audioUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PIPELINE-SET. URL of this scene's pre-generated narration audio, played by the browser reel instead of speech synthesis. Never set this.",
+          "title": "Audiourl"
+        },
         "type": {
           "const": "diagram",
           "title": "Type",
@@ -456,6 +508,19 @@
           "description": "PIPELINE-SET. Derived from the measured length of this scene's narration audio. Never set this.",
           "title": "Durationms"
         },
+        "audioUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PIPELINE-SET. URL of this scene's pre-generated narration audio, played by the browser reel instead of speech synthesis. Never set this.",
+          "title": "Audiourl"
+        },
         "type": {
           "const": "outro",
           "title": "Type",
@@ -522,6 +587,7 @@
         "kind": {
           "enum": [
             "aidoc",
+            "slack",
             "topic"
           ],
           "title": "Kind",
@@ -550,6 +616,7 @@
             }
           ],
           "default": null,
+          "description": "Required when kind is slack: the thread permalink.",
           "title": "Url"
         },
         "title": {
@@ -620,6 +687,19 @@
           "description": "PIPELINE-SET. Derived from the measured length of this scene's narration audio. Never set this.",
           "title": "Durationms"
         },
+        "audioUrl": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "PIPELINE-SET. URL of this scene's pre-generated narration audio, played by the browser reel instead of speech synthesis. Never set this.",
+          "title": "Audiourl"
+        },
         "type": {
           "const": "title",
           "title": "Type",
@@ -663,7 +743,7 @@
       "$ref": "#/$defs/StoryboardSource"
     },
     "scenes": {
-      "description": "4-6 scenes, under 60 seconds spoken in total. Byte-sized reel.",
+      "description": "4-8 scenes, 60 to 90 seconds spoken in total. Byte-sized reel.",
       "items": {
         "discriminator": {
           "mapping": {
@@ -697,7 +777,7 @@
           }
         ]
       },
-      "maxItems": 6,
+      "maxItems": 8,
       "minItems": 4,
       "title": "Scenes",
       "type": "array"

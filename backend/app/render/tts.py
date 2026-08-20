@@ -93,7 +93,11 @@ def _synth_kokoro(text: str, path: Path, voice: str) -> bool:
         log.info("kokoro unavailable (%s); falling back", exc)
         return False
     try:
-        pipeline = KPipeline(lang_code="a")
+        # Kokoro names a voice <lang><gender>_<name>, and the pipeline needs the
+        # matching G2P: "a" American, "b" British, "h" Hindi. This was pinned to "a",
+        # so any non-American voice was phonemised as American and came out wrong —
+        # which made the voice setting look like it did nothing.
+        pipeline = KPipeline(lang_code=voice[0] if voice else "a")
         rate = 24000
         chunks = [audio for _, _, audio in pipeline(text, voice=voice, speed=settings.kokoro_speed)]
         if not chunks:

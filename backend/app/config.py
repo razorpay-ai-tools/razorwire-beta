@@ -55,21 +55,17 @@ class Settings(BaseSettings):
     aidocs_token: str = ""
 
     # --- slack ingestion ------------------------------------------------------
-    #: Restored here for the same reason as `work_dir` below: PR #5 added these and
-    #: `slack.py` reads them, but PR #4's config.py landed without them.
+    #: Bot token (``xoxb-``). Read-only: the integration calls conversations.replies,
+    #: conversations.info and users.info over GET and nothing else, so the scopes are
+    #: channels:history, groups:history, channels:read, users:read — no write scope.
+    #: The bot must also be invited to any channel it reads, or Slack returns
+    #: `not_in_channel`.
     #:
-    #: Bot token (``xoxb-``). Needs scopes: channels:history, groups:history,
-    #: channels:read, users:read. The bot must also be invited to any channel it
-    #: reads — Slack returns `not_in_channel` otherwise.
+    #: There is deliberately no channel allow-list. Which Slack channel a thread came
+    #: from no longer gates ingestion; the restriction that replaced it is on OUR side —
+    #: a Slack-sourced post is pinned to the Announcements channel. See
+    #: `ANNOUNCEMENTS_SLUG` in main.py.
     slack_bot_token: str = ""
-    #: Channels we are allowed to ingest from, comma-separated ids or names. Empty
-    #: means none: an allow-list that defaults to "everything" is not an allow-list.
-    slack_allowed_channels: str = ""
-
-    @property
-    def slack_allow_list(self) -> frozenset[str]:
-        raw = (self.slack_allowed_channels or "").split(",")
-        return frozenset(part.strip().lstrip("#") for part in raw if part.strip())
 
     # --- storage --------------------------------------------------------------
     #: Uploads land here when Supabase Storage is not configured.
@@ -94,12 +90,24 @@ class Settings(BaseSettings):
     render_height: int = 1920
     #: TTS backend: "auto" prefers Kokoro, falls back to macOS `say`, then silence.
     render_tts: str = "auto"
+    #: Kokoro voice, named <lang><gender>_<name>; the first letter also selects the
+    #: G2P the pipeline uses (see render/tts.py).
+    #:
+    #: af_heart is the only voice Kokoro grades A, and it shows — the Hindi packs
+    #: (hf_alpha/hf_beta, the nearest thing to Indian English) are graded C and read
+    #: English as a second language, which is audible. Warmer A-/B alternates worth
+    #: hearing: af_bella, af_sarah, bf_emma (British).
     kokoro_voice: str = "af_heart"
     #: Slightly under 1.0 reads as a person explaining, not a system announcing.
     kokoro_speed: float = 0.95
-    #: Hard cap on a single scene's spoken length so one runaway scene cannot
-    #: stretch the render; longer scenes are clamped.
-    render_scene_max_ms: int = 15000
+    #: Backstop against a TTS engine that loops or never terminates — NOT a budget.
+    #: The clamp caps the duration we record while the wav keeps its real length, so
+    #: a ceiling under the longest legitimate narration silently truncates the voice:
+    #: at 15s it was cutting 22% of scenes short, up to 6.3s, and the reel advanced
+    #: mid-sentence. Narration is capped at 420 characters (~70 words), which is ~28s
+    #: at this voice and speed, so 30s cannot clip real speech. Total length is
+    #: governed by MAX_SPOKEN_SECONDS in storyboard.py, which is the actual budget.
+    render_scene_max_ms: int = 30000
     #: Background footage library: <mood>.mp4 per broll mood. Shared with the web
     #: app's /broll/<clipId>.mp4 path, hence the default inside public/. A scene
     #: whose mood has no clip here falls back to the CSS gradient.

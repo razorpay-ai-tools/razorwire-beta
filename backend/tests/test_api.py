@@ -15,10 +15,8 @@ from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("DEV_AUTH_EMAIL", "tester@razorpay.com")
-os.environ["DATABASE_URL"] = "sqlite://"  # in-memory, per session
-os.environ["SUPABASE_URL"] = ""
-os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
+# Environment isolation lives in conftest.py, which pytest imports before any
+# test module — overrides here were import-order roulette.
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -76,6 +74,14 @@ def test_script_stage_rejects_model_set_duration():
     assert any("durationMs is pipeline-set" in e for e in exc.value.errors)
 
 
+def test_script_stage_rejects_model_set_audio_url():
+    data = load()
+    data["scenes"][0]["audioUrl"] = "/media/job_x_scene0.m4a"
+    with pytest.raises(StoryboardInvalid) as exc:
+        validate_storyboard(data, "script")
+    assert any("audioUrl is pipeline-set" in e for e in exc.value.errors)
+
+
 def test_script_stage_rejects_model_invented_clip():
     data = load()
     data["scenes"][0]["broll"]["clipId"] = "veo_money_01"
@@ -123,7 +129,10 @@ def test_topic_source_does_not_need_cites():
 
 def test_rejects_runaway_narration():
     data = load()
-    data["scenes"][1]["narration"] = " ".join(["word"] * 80)
+    # Blow the spoken ceiling while every scene stays under its own 420-char cap:
+    # ~70 words per scene, all scenes, always exceeds the total whatever the constant.
+    for scene in data["scenes"]:
+        scene["narration"] = " ".join(["word"] * 70)
     with pytest.raises(StoryboardInvalid) as exc:
         validate_storyboard(data, "script")
     assert any("ceiling" in e for e in exc.value.errors)
@@ -133,6 +142,7 @@ def test_tool_schema_hides_pipeline_fields():
     raw = json.dumps(tool_input_schema())
     assert "durationMs" not in raw
     assert "clipId" not in raw
+    assert "audioUrl" not in raw
     assert "dataflow" in raw  # the mood vocabulary is still exposed
 
 
@@ -603,3 +613,260 @@ def test_text_only_reply_still_produces_a_storyboard(monkeypatch):
     sb = run_script_stage(kind="aidoc", text="anything", doc_id="doc_abc123")
     assert sb.scenes, "a text-shaped reply must still yield scenes"
     assert sb.source.doc_id == "doc_abc123", "the pipeline sets source, not the model"
+
+
+# ------------------------------------------------------- the plan stage (multi-video)
+
+from app.pipeline import run_plan_stage, validate_parts  # noqa: E402
+
+
+def _fake_llm(monkeypatch, response):
+    """Install a fake Anthropic client whose one call returns (or raises via) `response`."""
+
+    class _FakeMessages:
+        def create(self, **kwargs):
+            return response() if callable(response) else response
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            self.messages = _FakeMessages()
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+    monkeypatch.setattr(settings, "litellm_api_key", "sk-test")
+
+
+def test_plan_validation_accepts_one_to_three_titled_parts():
+    two = {"parts": [{"title": " The problem ", "focus": "why"}, {"title": "The fix", "focus": "how"}]}
+    assert validate_parts(two) == [
+        {"title": "The problem", "focus": "why"},
+        {"title": "The fix", "focus": "how"},
+    ]
+
+
+def test_plan_validation_rejects_every_unusable_shape():
+    for bad in (
+        None,
+        "three parts please",
+        {},
+        {"parts": []},  # zero parts
+        {"parts": [{"title": f"t{i}", "focus": ""} for i in range(4)]},  # too many
+        {"parts": [{"title": "  ", "focus": "x"}]},  # blank title
+        {"parts": [{"focus": "no title at all"}]},
+        {"parts": [{"title": "ok", "focus": ""}, "not an object"]},
+    ):
+        assert validate_parts(bad) is None, bad
+
+
+def test_plan_stage_falls_back_to_a_single_part_on_garbage(monkeypatch):
+    """Planning misbehaving must never fail the job — it collapses to one part."""
+    _fake_llm(monkeypatch, _text_reply("I would rather chat than call tools."))
+    assert run_plan_stage(kind="aidoc", text="anything", doc_title="OTM Rearch") == [
+        {"title": "OTM Rearch", "focus": ""}
+    ]
+
+
+def test_plan_stage_falls_back_when_the_call_blows_up(monkeypatch):
+    def boom():
+        raise RuntimeError("gateway down")
+
+    _fake_llm(monkeypatch, boom)
+    assert len(run_plan_stage(kind="aidoc", text="anything")) == 1
+
+
+def test_plan_stage_reads_a_tool_call(monkeypatch):
+    plan = {"parts": [{"title": "A", "focus": "f"}, {"title": "B", "focus": "g"}]}
+    _fake_llm(monkeypatch, SimpleNamespace(content=[SimpleNamespace(type="tool_use", input=plan, id="tu_1")]))
+    assert [p["title"] for p in run_plan_stage(kind="aidoc", text="anything")] == ["A", "B"]
+
+
+def test_single_part_leaves_the_title_unsuffixed(monkeypatch):
+    payload = load()
+    payload.pop("source", None)
+    _fake_llm(monkeypatch, _text_reply(json.dumps(payload)))
+    sb = run_script_stage(kind="aidoc", text="anything", doc_id="doc_abc123")
+    assert "Part" not in sb.meta.title
+
+
+def test_multi_part_titles_carry_the_part_suffix(monkeypatch):
+    payload = load()
+    payload.pop("source", None)
+    _fake_llm(monkeypatch, _text_reply(json.dumps(payload)))
+    sb = run_script_stage(
+        kind="aidoc",
+        text="anything",
+        doc_id="doc_abc123",
+        part={"title": "The problem", "focus": "why it breaks", "index": 2, "total": 3},
+    )
+    assert sb.meta.title.endswith("— Part 2/3")
+    assert len(sb.meta.title) <= 70  # StoryboardMeta.title max_length survives the suffix
+
+
+def test_multi_part_job_publishes_a_post_per_part_and_points_at_part_one(client, monkeypatch):
+    import app.main as main_module
+    from app.models import Job, _engine
+    from app.render import publish as publish_module
+    from sqlmodel import Session
+
+    monkeypatch.setattr(
+        main_module,
+        "run_plan_stage",
+        lambda **kw: [{"title": "The problem", "focus": "f1"}, {"title": "The fix", "focus": "f2"}],
+    )
+    seen_parts: list = []
+
+    def fake_script(*, part=None, **kw):
+        seen_parts.append(part)
+        return validate_storyboard(load(), "script")
+
+    monkeypatch.setattr(main_module, "run_script_stage", fake_script)
+    monkeypatch.setattr(main_module, "_voice_reel", lambda *a, **kw: None)
+
+    created: list[str] = []
+    real_publish = publish_module.publish_storyboard_only
+
+    def spy(session, job, sb, **kw):
+        post = real_publish(session, job, sb, **kw)
+        created.append(post.id)
+        return post
+
+    monkeypatch.setattr(publish_module, "publish_storyboard_only", spy)
+
+    me = client.get("/me").json()
+    with Session(_engine) as session:
+        job = Job(requester_id=me["id"], source_kind="topic", source_input="x")
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    main_module._run_job(
+        job_id, main_module.GenerateRequest(kind="topic", input="a topic worth two parts")
+    )
+
+    assert [p and (p["index"], p["total"], p["title"]) for p in seen_parts] == [
+        (1, 2, "The problem"),
+        (2, 2, "The fix"),
+    ]
+    assert len(created) == 2
+    with Session(_engine) as session:
+        job = session.get(Job, job_id)
+        assert (job.state, job.progress) == ("published", 100)
+        assert job.post_id == created[0], "the job must land the viewer on part 1"
+
+
+def test_generate_records_the_requested_format_on_the_job(client, monkeypatch):
+    """The row has to say what was asked for.
+
+    "I picked video and got a reel" is otherwise unanswerable after the fact: the format
+    lived only in the request body, so nothing on disk could tell a job that published the
+    wrong thing from one that was never asked for the right thing.
+    """
+    import app.main as main_module
+
+    # TestClient runs background tasks inline, and this covers the endpoint's write, not
+    # the worker — without this the assertion below costs a real gateway call.
+    monkeypatch.setattr(main_module, "_run_job", lambda *a, **kw: None)
+
+    queued = client.post(
+        "/generate", json={"kind": "topic", "input": "a topic worth explaining", "format": "video"}
+    ).json()
+    assert queued["format"] == "video"
+    assert client.get(f"/jobs/{queued['id']}").json()["format"] == "video"
+
+    # and the default is still the reel, for callers that predate the choice
+    reel = client.post("/generate", json={"kind": "topic", "input": "a topic worth explaining"})
+    assert reel.json()["format"] == "reel"
+
+
+def test_generate_rejects_an_unknown_channel(client):
+    body = {"kind": "topic", "input": "a topic with enough text", "channelId": "chn_nope"}
+    assert client.post("/generate", json=body).status_code == 422
+
+
+def test_multi_part_job_keeps_part_ones_storyboard_and_channel(client, monkeypatch):
+    """`job.storyboard` must describe the post `job.post_id` points at.
+
+    Each part overwrites the column as it runs, so the last part's storyboard was the one
+    left behind while `post_id` still pointed at part 1 — the panel showed part 3's scenes
+    under part 1's id.
+    """
+    import app.main as main_module
+    from app.models import Job, Post, _engine
+    from sqlmodel import Session, select
+
+    monkeypatch.setattr(
+        main_module,
+        "run_plan_stage",
+        lambda **kw: [{"title": "one", "focus": "f1"}, {"title": "two", "focus": "f2"}],
+    )
+
+    def fake_script(*, part=None, **kw):
+        raw = load()
+        raw["meta"]["title"] = f"part {part['index']}" if part else "whole"
+        return validate_storyboard(raw, "script")
+
+    monkeypatch.setattr(main_module, "run_script_stage", fake_script)
+    monkeypatch.setattr(main_module, "_voice_reel", lambda *a, **kw: None)
+
+    me = client.get("/me").json()
+    channel = client.post("/channels", json={"name": "Part Landing Zone"}).json()
+    with Session(_engine) as session:
+        job = Job(requester_id=me["id"], source_kind="topic", source_input="x")
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    main_module._run_job(
+        job_id,
+        main_module.GenerateRequest(kind="topic", input="two parts", channel_id=channel["id"]),
+    )
+
+    with Session(_engine) as session:
+        job = session.get(Job, job_id)
+        assert job.storyboard["meta"]["title"] == "part 1"
+        assert session.get(Post, job.post_id).title == "part 1"
+        # every part lands in the chosen channel, not just the one the caller hears about
+        titles = {
+            post.title: post.channel_id
+            for post in session.exec(select(Post).where(Post.title.in_(["part 1", "part 2"]))).all()
+        }
+        assert titles == {"part 1": channel["id"], "part 2": channel["id"]}
+
+
+def test_failed_second_part_keeps_part_one_and_names_the_failure(client, monkeypatch):
+    import app.main as main_module
+    from app.models import Job, _engine
+    from sqlmodel import Session
+
+    monkeypatch.setattr(
+        main_module,
+        "run_plan_stage",
+        lambda **kw: [{"title": "The problem", "focus": "f1"}, {"title": "The fix", "focus": "f2"}],
+    )
+
+    def fake_script(*, part=None, **kw):
+        if part and part["index"] == 2:
+            raise RuntimeError("model fell over")
+        return validate_storyboard(load(), "script")
+
+    monkeypatch.setattr(main_module, "run_script_stage", fake_script)
+    monkeypatch.setattr(main_module, "_voice_reel", lambda *a, **kw: None)
+
+    me = client.get("/me").json()
+    with Session(_engine) as session:
+        job = Job(requester_id=me["id"], source_kind="topic", source_input="x")
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    main_module._run_job(
+        job_id, main_module.GenerateRequest(kind="topic", input="a topic worth two parts")
+    )
+
+    with Session(_engine) as session:
+        job = session.get(Job, job_id)
+        assert job.state == "failed"
+        assert "part 2/2" in job.error and "The fix" in job.error
+        assert job.post_id, "part 1's published post survives part 2's failure"
+        assert client.get(f"/posts/{job.post_id}").status_code == 200

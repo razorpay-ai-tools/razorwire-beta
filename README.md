@@ -102,6 +102,19 @@ cd backend
 .venv/bin/python scripts/check_shared_storage.py
 ```
 
+Posts published before the voice settings or the narration prompt changed still carry
+the old audio. `scripts/revoice.py` re-synthesises every published reel's scene audio
+with the current voice — free, idempotent, `--dry-run` first, `--post <id>` for one.
+Add `--rescript` to also regenerate the narration text through the model, which costs
+one LLM call per post; MP4-backed posts are skipped either way, since their audio is
+baked into the file.
+
+```bash
+cd backend
+.venv/bin/python scripts/revoice.py --dry-run
+.venv/bin/python scripts/revoice.py
+```
+
 `scripts/seed.py` is idempotent and does not migrate. On a database that predates
 channels, either `rm backend/razorwire.db` or add the two columns in place:
 
@@ -248,6 +261,7 @@ backend/
   app/main.py             feed, channels, profiles, posts, reactions, uploads, jobs
   app/models.py           eight DB tables; reaction counts derived, never denormalised
   scripts/seed.py         sample channels, posts and follows for an empty database
+  scripts/revoice.py      re-voice (and optionally re-script) already-published reels
   tests/                  123 tests — api, render contract, ingestion
 src/
   app/page.tsx         app shell — feed is the default view, create is a sheet over it

@@ -31,12 +31,20 @@ from app.models import Channel, Follow, Post, User, _engine, init_db, utcnow  # 
 FIXTURE = Path(__file__).resolve().parents[2] / "src/lib/fixtures/otm-rearch.storyboard.json"
 SAMPLE_CLIP = "sample-culture-clip.mp4"
 
+# Order matters only for display. Announcements is first because it is the one channel
+# the system posts to on its own: a Slack announcement turned into a video lands here,
+# which is why GeneratePanel defaults to it for a Slack source.
 CHANNELS = [
+    ("Announcements", "Ships, launches and changes -- straight from the thread that announced them."),
     ("Architecture", "How the systems are put together, and why."),
     ("Payments Core", "Mandates, refunds, routing -- the money path."),
     ("Culture", "How we work: rituals, crits, retros."),
     ("Incident Reviews", "What broke, what we changed."),
 ]
+
+#: Slug of the channel above that generated announcements go to. Derived the same way
+#: the loop derives every slug, so renaming the channel cannot leave this stale.
+ANNOUNCEMENTS_SLUG = CHANNELS[0][0].lower().replace(" ", "-")
 
 AUTHORS = [
     ("asha.iyer@razorpay.com", "Asha Iyer", "Payments platform. Explains mandates to anyone who asks."),

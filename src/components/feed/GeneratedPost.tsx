@@ -16,7 +16,6 @@ import { ActionRail } from './ActionRail';
 import {
   MuteButton,
   NarrationNotice,
-  NarrationRateButton,
   PostMeta,
   accentBackdrop,
   useMute,
@@ -188,7 +187,7 @@ function GeneratedVideo({ post, active }: { post: Post; active: boolean }) {
 
 function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
   const scenes = useMemo(() => post.storyboard?.scenes ?? [], [post.storyboard]);
-  const { muted, rate } = useMute();
+  const { muted } = useMute();
   // Unmuted, the voice paces the reel and the timer stands down. See useNarration.
   const spoken = !muted && active;
   const { index, count, scene, caption, playing, setPlaying, next, prev, advance } = useReel(
@@ -222,12 +221,22 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
    * Narration speaks the caption on screen, and finishing it advances the reel. The
    * shared mute control is what turns it on — there is no audio track to unmute — so
    * nothing is ever spoken before a click, which also keeps it clear of autoplay policy.
+   *
+   * A scene with pre-generated audio (`audioUrl`, the kokoro voice) plays that instead
+   * of the synthesizer. The file covers the whole scene's narration, so its `ended`
+   * event advances the scene, not the line.
    */
+  const audioUrl = scene?.audioUrl ?? null;
+  // Where the voice has got to in this scene's audio, so the scene's own build-up
+  // (diagram nodes, bullet rows) lands on the words rather than on a blind timer.
+  // Null once there is no audio to follow, which is what selects that timer.
+  const [progress, setProgress] = useState(0);
   useNarration({
     text: caption,
+    audioUrl,
     enabled: spoken && playing,
-    rate,
-    onDone: advance,
+    onDone: audioUrl ? next : advance,
+    onProgress: setProgress,
   });
 
   if (!scene) {
@@ -270,7 +279,11 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
        * zones on top, the outro's "Read the full spec" button was visible and dead.
        */}
       <div className="pointer-events-none absolute inset-0 z-20">
-        <SceneView scene={scene} active={active} />
+        <SceneView
+          scene={scene}
+          active={active}
+          progress={audioUrl && spoken ? progress : null}
+        />
       </div>
 
       {/* Tap thirds: back, pause, forward. Keyboard equivalents live on window. */}
@@ -322,10 +335,9 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
             </span>
           </span>
 
-          {/* Grouped so the pair stays right-aligned when the rate button is hidden. */}
+          {/* Grouped so the pair stays right-aligned. */}
           <div className="ml-auto flex items-center gap-2">
             <NarrationNotice />
-            <NarrationRateButton />
             <MuteButton />
           </div>
         </div>

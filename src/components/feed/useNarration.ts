@@ -130,23 +130,108 @@ export function useSpeechVoiceCount(): number {
 interface NarrationOptions {
   /** The line to speak. Null or empty says nothing. */
   text: string | null;
+  /**
+   * Pre-generated narration audio for the whole scene (the same kokoro voice a
+   * rendered MP4 gets). When set, it is played instead of the synthesizer and
+   * `onDone` fires on the audio's `ended` event — one call per scene, not per line.
+   */
+  audioUrl?: string | null;
   /** False when muted, paused, off screen, or not a generated post. */
   enabled: boolean;
-  rate: number;
+  /**
+   * Playback speed. Defaults to 1 and no UI changes it: the voice is written to be
+   * heard at its own pace — punctuation is the pacing — and speeding it up is what
+   * made it sound synthetic. Kept as an option because the watchdog needs the number.
+   */
+  rate?: number;
   /** Called when the line has been spoken, or when speaking it failed. */
   onDone: () => void;
+  /**
+   * Where the pre-generated audio has got to, 0..1, on every `timeupdate` and once
+   * with 0 when a new file starts. This is the only real position we have, so it is
+   * what the scene templates build their diagrams and lists against.
+   *
+   * The synthesizer path never fires it: `SpeechSynthesis` reports no position at all,
+   * only boundary events we do not subscribe to, so consumers keep their own timer
+   * there. A consumer distinguishes the two by whether the scene has an `audioUrl`.
+   */
+  onProgress?: (fraction: number) => void;
 }
 
-export function useNarration({ text, enabled, rate, onDone }: NarrationOptions): void {
+export function useNarration({
+  text,
+  audioUrl,
+  enabled,
+  rate = 1,
+  onDone,
+  onProgress,
+}: NarrationOptions): void {
   // Held in a ref so a new callback identity does not restart the sentence.
   const onDoneRef = useRef(onDone);
   useEffect(() => {
     onDoneRef.current = onDone;
   }, [onDone]);
 
+  // Same reason, and more pressing: this one fires ~4x a second, so a caller that
+  // passes an inline arrow must not re-create the audio element on every tick.
+  const onProgressRef = useRef(onProgress);
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+  }, [onProgress]);
+
+  /*
+   * The audio path. Real narration exists, so the synthesizer stands down entirely —
+   * same contract as the synth path: finishing (or failing) the audio calls onDone,
+   * and pausing/unmounting tears the element down. A failed load also calls onDone,
+   * because a reel frozen on one scene is worse than a scene that plays silently.
+   */
+  useEffect(() => {
+    if (!enabled || !audioUrl) return;
+
+    let cancelled = false;
+    const audio = new Audio(audioUrl);
+    audio.playbackRate = rate;
+
+    function finish() {
+      if (cancelled) return;
+      onDoneRef.current();
+    }
+
+    /*
+     * `duration` is NaN until metadata lands, and Infinity for a stream, so a guard
+     * rather than a clamp: a fraction derived from either is worse than no fraction,
+     * because a consumer cannot tell a garbage 0 from the real start of the file.
+     */
+    function report() {
+      if (cancelled) return;
+      const { currentTime, duration } = audio;
+      if (!Number.isFinite(duration) || duration <= 0) return;
+      onProgressRef.current?.(Math.min(1, Math.max(0, currentTime / duration)));
+    }
+
+    // A new file starts at the beginning, and the consumer has to hear about it before
+    // the first `timeupdate` — otherwise a scene inherits the previous scene's fraction
+    // and paints its whole diagram on the first frame.
+    onProgressRef.current?.(0);
+
+    audio.addEventListener('timeupdate', report);
+    audio.addEventListener('ended', finish);
+    audio.addEventListener('error', finish);
+    void audio.play().catch((error: unknown) => {
+      trace('audio play refused', error);
+      finish();
+    });
+
+    return () => {
+      cancelled = true;
+      audio.pause();
+      audio.removeAttribute('src');
+    };
+  }, [audioUrl, enabled, rate]);
+
   useEffect(() => {
     const synth = typeof window === 'undefined' ? undefined : window.speechSynthesis;
-    if (!synth || !enabled || !text) return;
+    if (audioUrl || !synth || !enabled || !text) return;
 
     // Narrowed once, so the nested function below keeps the types.
     const speech = synth;
@@ -258,5 +343,5 @@ export function useNarration({ text, enabled, rate, onDone }: NarrationOptions):
       window.clearTimeout(startTimer);
       speech.cancel();
     };
-  }, [text, enabled, rate]);
+  }, [text, audioUrl, enabled, rate]);
 }

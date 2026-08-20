@@ -106,6 +106,8 @@ export interface Job {
   state: JobState;
   progress: number;
   error: string | null;
+  /** What was asked for. Recorded on the job so the wrong output is diagnosable. */
+  format: GenerateFormat;
   storyboard: Storyboard | null;
   postId: string | null;
   createdAt: string;
@@ -123,12 +125,25 @@ export interface Job {
 export type GenerateFormat = 'reel' | 'video';
 
 export interface GenerateRequest {
-  kind: 'aidoc' | 'topic';
+  kind: 'aidoc' | 'slack' | 'topic';
   input: string;
   docId?: string;
   docTitle?: string;
   docUrl?: string;
+  /**
+   * Slack message permalink, for `kind: 'slack'`. A link to any reply works — the
+   * server resolves it to the parent thread. No pasted-text fallback on purpose:
+   * text copied out of Slack has lost the per-message authorship that the citations
+   * point at. See `backend/app/slack.py`.
+   */
+  slackUrl?: string;
   format?: GenerateFormat;
+  /**
+   * Channel the finished post(s) land in. Sent with the request rather than applied
+   * afterwards because the pipeline creates the posts — and a multi-part source becomes
+   * several, only the first of which comes back as `job.postId`.
+   */
+  channelId?: string;
 }
 
 /** `/health`, which also answers whether this API box can render an MP4 at all. */

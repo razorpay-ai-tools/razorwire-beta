@@ -414,7 +414,7 @@
       "items": {
         "$ref": "#/$defs/RenderScene"
       },
-      "maxItems": 6,
+      "maxItems": 8,
       "minItems": 4,
       "title": "Scenes",
       "type": "array"

@@ -38,13 +38,7 @@ import { SceneView } from '@/components/scenes/SceneView';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, type Post } from '@/lib/api';
 import { Broll } from './GeneratedPost';
-import {
-  MuteButton,
-  NarrationNotice,
-  NarrationRateButton,
-  accentBackdrop,
-  useMute,
-} from './chrome';
+import { MuteButton, NarrationNotice, accentBackdrop, useMute } from './chrome';
 import { DesktopPanel } from './DesktopPanel';
 import { useNarration } from './useNarration';
 import { useReel, type Reel } from './useReel';
@@ -97,7 +91,7 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
   const generated = post.kind === 'generated';
   // A generated post with an MP4 plays the file; only without one is it live scenes.
   const scenePost = generated && !post.mediaUrl;
-  const { muted, rate } = useMute();
+  const { muted } = useMute();
   // Unmuted, the voice paces the reel and the timer stands down. See useNarration.
   // Never for an MP4 post: the file carries its own spoken track.
   const spoken = scenePost && !muted && active;
@@ -129,12 +123,16 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
    * the shared mute control drives the synth. Without this the unmute button would be a
    * control that does nothing on desktop. Same hook as mobile: one implementation of
    * "speak the caption, then advance", two compositions.
+   *
+   * A scene with pre-generated audio (`audioUrl`, the kokoro voice) plays that instead;
+   * the file covers the whole scene, so `ended` advances the scene, not the line.
    */
+  const audioUrl = reel.scene?.audioUrl ?? null;
   useNarration({
     text: reel.caption,
+    audioUrl,
     enabled: spoken && reel.playing,
-    rate,
-    onDone: reel.advance,
+    onDone: audioUrl ? reel.next : reel.advance,
   });
 
   return (
@@ -326,10 +324,9 @@ function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel:
             </span>
           </span>
 
-          {/* Grouped so the pair stays right-aligned when the rate button is hidden. */}
+          {/* Grouped so the pair stays right-aligned. */}
           <div className="ml-auto flex items-center gap-2">
             <NarrationNotice />
-            <NarrationRateButton />
             <MuteButton />
           </div>
         </div>
