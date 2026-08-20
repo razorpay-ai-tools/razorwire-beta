@@ -140,7 +140,12 @@ def test_tool_schema_hides_pipeline_fields():
 
 
 def test_health_needs_no_auth(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    # It also reports whether ingestion is configured, so one unauthenticated request
+    # answers "why does every document fail?" without submitting a doomed job.
+    assert set(body["aidocs"]) == {"mode", "ready", "detail"}
+    assert body["aidocs"]["mode"] in {"service_account", "cli", "none"}
 
 
 def test_me_creates_the_user_on_first_sight(client):

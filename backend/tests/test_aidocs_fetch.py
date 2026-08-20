@@ -200,3 +200,36 @@ def test_a_trailing_slash_on_the_server_does_not_double_up(monkeypatch, with_tok
     monkeypatch.setattr(aidocs.httpx, "get", lambda url, **k: (seen.update(url=url), Resp())[1])
     aidocs._api("/documents/abc", token="t")
     assert seen["url"] == "https://aidocs.example.com/v1/documents/abc"
+
+
+# ------------------------------------------------- reporting the credential we have
+# The point of these: a deployment that cannot read documents should say so on
+# /health, not force someone to submit a doomed job and read the error.
+
+
+def test_a_token_reports_ready(monkeypatch, with_token) -> None:
+    s = aidocs.credential_status()
+    assert (s["mode"], s["ready"]) == ("service_account", "yes")
+    assert "aidocs.example.com" in s["detail"]
+
+
+def test_no_token_but_a_cli_reports_probably(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "aidocs_token", "")
+    monkeypatch.setattr(aidocs.shutil, "which", lambda _: "/usr/local/bin/aidocs")
+    s = aidocs.credential_status()
+    assert (s["mode"], s["ready"]) == ("cli", "probably")
+    assert "container" in s["detail"]
+
+
+def test_neither_reports_not_ready_and_says_what_to_do(monkeypatch) -> None:
+    """This is exactly the hosted backend's state, and what it should have told us."""
+    monkeypatch.setattr(settings, "aidocs_token", "")
+    monkeypatch.setattr(aidocs.shutil, "which", lambda _: None)
+    s = aidocs.credential_status()
+    assert (s["mode"], s["ready"]) == ("none", "no")
+    assert "AIDOCS_TOKEN" in s["detail"] and "sa key create" in s["detail"]
+
+
+def test_the_status_never_contains_the_token(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "aidocs_token", "aidocs_supersecretvalue")
+    assert "supersecretvalue" not in repr(aidocs.credential_status())
