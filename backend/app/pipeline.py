@@ -57,6 +57,15 @@ Rules that matter more than style:
    becomes "merchant category code", "block_fund" becomes "block fund". On-screen `bullets` are
    read by the eye, narration by the ear — they should not be the same words.
 
+3b. PUNCTUATE FOR BREATH. The voice engine turns punctuation into pauses, so write the pauses
+   in: short sentences, a comma where a speaker would take half a beat, an em dash before the
+   payoff, a full stop instead of a run-on. Read your narration aloud in your head — if you
+   run out of air, so will the voice.
+
+3c. TONE IS LIGHT. Warm, upbeat and plainly glad to explain — a colleague sharing something
+   genuinely useful, not a system issuing a briefing. Problems are the setup for a fix, never
+   doom. Keep it professional: light means easy to listen to, not jokey.
+
 4. BUDGET. {{min_scenes}} to {{max_scenes}} scenes, and all narration together must stay under 60
    seconds spoken, which is roughly 150 words in total. Open with why an engineer should care;
    close with an outro.
@@ -69,6 +78,12 @@ Rules that matter more than style:
 4c. `compare` IS A LIGHT DEVICE. Its per-side items do not survive into the final video, so use
    it only when the two labels alone carry the point. Anything with real content belongs in
    `bullets`, and any before/after architecture belongs in two `diagram` scenes per 4b.
+
+4d. DIAGRAMS ARE WALKED, NOT SHOWN. The video reveals a diagram one component at a time,
+   in the order the Mermaid source declares them. Write the narration as that walk: name
+   each component once, in declaration order, saying what it does or hands over — so a
+   viewer who has never seen the system can follow the build-up. Same for bullets, which
+   appear one at a time in order.
 
 5. FOOTAGE. `broll.mood` picks background video from a fixed set: {{moods}}. It is decoration
    behind your content and carries no information. Use `abstract` behind dense scenes such as
@@ -111,8 +126,9 @@ start to finish. Write it as a short informative film, not as slides:
 - ONE WORKED EXAMPLE, carried through. Pick a single concrete case the document supports —
   one request, one mandate, one outage — and follow it across the scenes so the viewer
   tracks a story instead of a list of facts. Use the document's real names and numbers.
-- ARC, NOT AGENDA. Open on the stake: what breaks, what it costs, who feels it. Turn on
-  the change. Close on what is different now. Never open with "this document covers".
+- ARC, NOT AGENDA. Open on the stake: what breaks, what it costs, who feels it. The very
+  first sentence is a hook under twelve words. Turn on the change. Close on what is
+  different now. Never open with "this document covers".
 - SPOKEN, NOT WRITTEN. Contractions, short sentences, one idea per sentence. The voice is
   the whole soundtrack, so a sentence that would be skimmed on screen has to be heard. No
   lists read aloud as lists.
@@ -121,6 +137,11 @@ start to finish. Write it as a short informative film, not as slides:
 - The example is not a licence to invent. If the document does not give you specifics,
   narrate the general case and cite it — a made-up number in a spoken video is worse than
   in text, because nobody pauses to check it.
+
+None of the above changes what you return. Emit the storyboard by calling the tool, or if
+you cannot call tools, reply with the storyboard as a single JSON object and nothing else.
+Do not write a screenplay, a shot list, or a treatment in prose: "film" describes how the
+narration should sound, not the format of your answer.
 """
 
 
@@ -192,7 +213,10 @@ def run_script_stage(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         response = client.messages.create(
             model=settings.llm_model,
-            max_tokens=4096,
+            # glm-5p2 is a reasoning model: its thinking block alone can eat 4096 tokens
+            # (the video brief reliably did), leaving stop_reason=max_tokens and an empty
+            # reply. The budget must cover thinking AND the storyboard.
+            max_tokens=16384,
             system=_system_prompt(),
             tools=[tool],
             tool_choice={"type": "tool", "name": _TOOL_NAME},

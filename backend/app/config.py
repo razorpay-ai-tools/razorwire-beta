@@ -83,9 +83,15 @@ class Settings(BaseSettings):
     #: TTS backend: "auto" prefers Kokoro, falls back to macOS `say`, then silence.
     render_tts: str = "auto"
     kokoro_voice: str = "af_heart"
+    #: Slightly under 1.0 reads as a person explaining, not a system announcing.
+    kokoro_speed: float = 0.95
     #: Hard cap on a single scene's spoken length so one runaway scene cannot
     #: stretch the render; longer scenes are clamped.
     render_scene_max_ms: int = 15000
+    #: Background footage library: <mood>.mp4 per broll mood. Shared with the web
+    #: app's /broll/<clipId>.mp4 path, hence the default inside public/. A scene
+    #: whose mood has no clip here falls back to the CSS gradient.
+    broll_dir: str = "../public/broll"
 
     @property
     def llm_api_key(self) -> str:

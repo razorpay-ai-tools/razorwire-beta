@@ -23,9 +23,13 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Segment:
-    png: Path
+    #: The scene's build-up, one frame per reveal step; frames split the narration
+    #: length evenly. A single frame simply holds.
+    pngs: list[Path]
     wav: Path
     duration_ms: int
+    #: Looping background footage; the PNGs (captured with alpha) are overlaid on it.
+    clip: Path | None = None
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
@@ -35,12 +39,37 @@ def _run(cmd: list[str], cwd: Path) -> None:
         raise RuntimeError(f"ffmpeg failed ({result.returncode}):\n{tail}")
 
 
-def _scene_filter(width: int, height: int, fps: int, frames: int) -> str:
+def _drift_filter(width: int, height: int, fps: int, frames: int) -> str:
+    """A single still with a barely-there drift, for scenes with no build-up and no
+    footage. Far gentler than the old Ken Burns: 1.04 max, not 1.12."""
     return (
         f"[0:v]scale={width}:{height},"
-        f"zoompan=z='min(zoom+0.0006,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+        f"zoompan=z='min(zoom+0.0002,1.04)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
         f"d={frames}:s={width}x{height}:fps={fps}[v];[1:a]apad[a]"
     )
+
+
+def _reveal_filter(
+    width: int, height: int, fps: int, *, steps: int, dur_s: float, footage: bool
+) -> str:
+    """Timed overlays: frame ``i`` of the build-up shows during its slice of the
+    narration. Input 0 is the background (looping clip, or black under opaque
+    frames); inputs 1..steps are the PNGs; the last input is the wav."""
+    if footage:
+        bg = (
+            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},fps={fps},setsar=1[bg];"
+        )
+    else:
+        bg = f"[0:v]fps={fps},setsar=1[bg];"
+    chain, prev = bg, "bg"
+    for i in range(steps):
+        start, end = dur_s * i / steps, dur_s * (i + 1) / steps
+        window = f"gte(t,{start:.3f})" if i == steps - 1 else f"between(t,{start:.3f},{end:.3f})"
+        label = "v" if i == steps - 1 else f"v{i}"
+        chain += f"[{prev}][{i + 1}:v]overlay=enable='{window}'[{label}];"
+        prev = label
+    return chain + f"[{steps + 1}:a]apad[a]"
 
 
 def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, height: int) -> Path:
@@ -62,12 +91,33 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
         dur_s = max(0.8, segment.duration_ms / 1000)
         frames = max(1, round(fps * dur_s))
         seg_name = f"seg{index}.mp4"
+        steps = len(segment.pngs)
+        if segment.clip is None and steps == 1:
+            inputs = [
+                "-i", segment.pngs[0].name,
+                "-i", segment.wav.name,
+                "-filter_complex", _drift_filter(width, height, fps, frames),
+            ]
+        else:
+            # The clip's own audio is never mapped; narration is the soundtrack.
+            if segment.clip is not None:
+                background = ["-stream_loop", "-1", "-i", str(segment.clip.resolve())]
+            else:
+                background = ["-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:r={fps}"]
+            inputs = [
+                *background,
+                *(part for png in segment.pngs for part in ("-loop", "1", "-i", png.name)),
+                "-i", segment.wav.name,
+                "-filter_complex",
+                _reveal_filter(
+                    width, height, fps, steps=steps, dur_s=dur_s,
+                    footage=segment.clip is not None,
+                ),
+            ]
         _run(
             [
                 "ffmpeg", "-y",
-                "-i", segment.png.name,
-                "-i", segment.wav.name,
-                "-filter_complex", _scene_filter(width, height, fps, frames),
+                *inputs,
                 "-map", "[v]", "-map", "[a]",
                 "-t", f"{dur_s:.3f}",
                 "-r", str(fps),

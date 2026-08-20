@@ -95,7 +95,7 @@ def _synth_kokoro(text: str, path: Path, voice: str) -> bool:
     try:
         pipeline = KPipeline(lang_code="a")
         rate = 24000
-        chunks = [audio for _, _, audio in pipeline(text, voice=voice)]
+        chunks = [audio for _, _, audio in pipeline(text, voice=voice, speed=settings.kokoro_speed)]
         if not chunks:
             return False
         _write_float_wav(path, chunks, rate)

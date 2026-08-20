@@ -123,29 +123,90 @@ def _pane(pane: Any) -> str:
     )
 
 
-_MERMAID_INIT = """
+#: Every scene defines ``window.__stepCount`` and ``window.__reveal(i)`` so the capture
+#: step can screenshot a build-up instead of one still: bullets appear one by one,
+#: diagrams grow node by node (an edge appears once both its endpoints have). ``reveal``
+#: uses visibility, not display, so layout never shifts between steps.
+_REVEAL_JS = """
+  window.__stepCount = 1;
+  window.__reveal = function (step) {};
+  function initReveal() {
+    const bullets = Array.from(document.querySelectorAll('.bullets li'));
+    if (bullets.length > 1) {
+      window.__stepCount = bullets.length;
+      window.__reveal = function (step) {
+        bullets.forEach((li, i) => { li.style.visibility = i < step ? 'visible' : 'hidden'; });
+      };
+      return;
+    }
+    const svg = document.querySelector('.diagram svg');
+    if (!svg) return;
+    const nodes = Array.from(svg.querySelectorAll('.node'));
+    if (nodes.length < 2) return;
+    const ids = nodes.map(n => (n.id.match(/flowchart-(.+)-\\d+$/) || [])[1]);
+    if (ids.some(id => !id)) return;  // unparseable ids: no reveal, one still
+    const idset = new Set(ids);
+    const edges = Array.from(svg.querySelectorAll('.flowchart-link'));
+    const labels = Array.from(svg.querySelectorAll('.edgeLabel'));
+    // mermaid v11 encodes endpoints in the edge id: <prefix>-L_A_B_0. Node names may
+    // contain underscores, so try every split until both halves are known nodes.
+    const endpoints = edges.map(e => {
+      const m = e.id.match(/-L_(.+)_\\d+$/);
+      if (!m) return null;
+      for (let cut = 1; cut < m[1].length - 1; cut++) {
+        if (m[1][cut] !== '_') continue;
+        const a = m[1].slice(0, cut), b = m[1].slice(cut + 1);
+        if (idset.has(a) && idset.has(b)) return [a, b];
+      }
+      return null;
+    });
+    window.__stepCount = nodes.length;
+    window.__reveal = function (step) {
+      const shown = new Set(ids.slice(0, step));
+      nodes.forEach((n, i) => { n.style.visibility = i < step ? 'visible' : 'hidden'; });
+      edges.forEach((e, i) => {
+        // An unparseable edge stays visible rather than never appearing.
+        const on = !endpoints[i] || (shown.has(endpoints[i][0]) && shown.has(endpoints[i][1]));
+        e.style.visibility = on ? 'visible' : 'hidden';
+        if (labels[i]) labels[i].style.visibility = on ? 'visible' : 'hidden';
+      });
+    };
+  }
+"""
+
+_MERMAID_INIT = f"""
 <script>
   window.__ready = false;
-  function ready() { window.__ready = true; }
+  {_REVEAL_JS}
+  function ready() {{ initReveal(); window.__ready = true; }}
   const nodes = document.querySelectorAll('.mermaid');
-  if (nodes.length === 0 || typeof mermaid === 'undefined') {
+  if (nodes.length === 0 || typeof mermaid === 'undefined') {{
     ready();
-  } else {
-    try {
-      mermaid.initialize({ startOnLoad: false, theme: 'dark',
-        themeVariables: { fontFamily: 'Inter, system-ui, sans-serif', fontSize: '30px' } });
-      mermaid.run({ nodes }).then(ready).catch(ready);
-    } catch (e) { ready(); }
-  }
+  }} else {{
+    try {{
+      mermaid.initialize({{ startOnLoad: false, theme: 'dark',
+        themeVariables: {{ fontFamily: 'Inter, system-ui, sans-serif', fontSize: '30px' }} }});
+      mermaid.run({{ nodes }}).then(ready).catch(ready);
+    }} catch (e) {{ ready(); }}
+  }}
 </script>
 """
 
-_STATIC_READY = "<script>window.__ready = true;</script>"
+_STATIC_READY = f"<script>{_REVEAL_JS}\ninitReveal(); window.__ready = true;</script>"
 
 
-def scene_html(scene: Any, *, width: int, height: int) -> str:
-    """Full HTML document for one scene, sized ``width`` x ``height``."""
+def scene_html(scene: Any, *, width: int, height: int, over_footage: bool = False) -> str:
+    """Full HTML document for one scene, sized ``width`` x ``height``.
+
+    ``over_footage`` swaps the opaque mood gradient for a translucent scrim, so the
+    captured PNG keeps alpha and ffmpeg can composite it over a looping b-roll clip.
+    """
     top, bottom = _mood_colors(scene)
+    background = (
+        "linear-gradient(180deg, rgba(2,6,23,.38), rgba(2,6,23,.66))"
+        if over_footage
+        else f"linear-gradient(160deg, {top}, {bottom})"
+    )
     is_diagram = scene.type == "diagram"
     mermaid_tag = (
         f'<script src="file://{MERMAID_JS}"></script>' if is_diagram and MERMAID_JS.exists() else ""
@@ -159,7 +220,7 @@ def scene_html(scene: Any, *, width: int, height: int) -> str:
   html, body {{ width: {width}px; height: {height}px; overflow: hidden; }}
   body {{
     font-family: Inter, -apple-system, "Segoe UI", system-ui, sans-serif;
-    color: #f8fafc; background: linear-gradient(160deg, {top}, {bottom});
+    color: #f8fafc; background: {background};
     display: flex; flex-direction: column; justify-content: center;
     padding: 150px 84px 240px;
   }}

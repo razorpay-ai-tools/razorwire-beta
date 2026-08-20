@@ -158,6 +158,52 @@ def test_fixture_renders_to_a_real_mp4(tmp_path):
     assert len(result.scene_durations) == len(sb.scenes)
 
 
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or not _has_playwright(),
+    reason="footage compositing needs ffmpeg and Playwright",
+)
+def test_broll_clip_is_composited_behind_the_scene(tmp_path, monkeypatch):
+    """A scene whose mood has a clip in broll_dir renders over that footage."""
+    import subprocess
+
+    from app.config import settings
+    from app.render import render_video
+
+    broll = tmp_path / "broll"
+    broll.mkdir()
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=red:s=270x480:d=1", "-r", "24",
+         str(broll / "team.mp4")],
+        check=True, capture_output=True,
+    )
+    monkeypatch.setattr(settings, "broll_dir", str(broll))
+    monkeypatch.setattr(settings, "render_tts", "silent")
+
+    sb = validate_storyboard(
+        {
+            "meta": {"title": "Footage test", "tags": ["test"]},
+            "source": {"kind": "topic"},
+            "scenes": [
+                {"type": "title", "heading": "Over footage", "narration": "One scene over footage.",
+                 "broll": {"mood": "team"}},
+                {"type": "bullets", "heading": "Clip again", "bullets": ["First point", "Second point"],
+                 "narration": "Footage behind bullets.", "broll": {"mood": "team"}},
+                {"type": "bullets", "heading": "No clip", "bullets": ["Third point", "Fourth point"],
+                 "narration": "This mood has no clip.", "broll": {"mood": "city"}},
+                {"type": "outro", "cta": "Done", "narration": "And one with no broll at all."},
+            ],
+        },
+        stage="script",
+    )
+    try:
+        result = render_video(sb, tmp_path / "work")
+    except RenderUnavailable as exc:
+        pytest.skip(f"render tooling unavailable: {exc}")
+
+    assert result.mp4_path.exists()
+    assert result.mp4_path.stat().st_size > 10_000
+
+
 def test_the_package_exports_everything_main_imports():
     """`__all__` promising a name is not the same as exporting it.
 
