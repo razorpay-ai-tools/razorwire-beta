@@ -313,15 +313,15 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
             value="reel"
             checked={format === 'reel'}
             onSelect={setFormat}
-            label="Storyboard reel"
+            label="Reel (interactive)"
             hint="Seconds · plays as scenes, narrated in your browser"
           />
           <FormatOption
             value="video"
             checked={format === 'video'}
             onSelect={setFormat}
-            label="Video clip"
-            hint="Minutes · a real MP4 with a spoken track"
+            label="Video (rendered MP4)"
+            hint="Minutes · a real file with a spoken track"
             disabled={canRender === false}
           />
         </div>
