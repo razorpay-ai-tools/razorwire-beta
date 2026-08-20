@@ -617,7 +617,7 @@ def test_text_only_reply_still_produces_a_storyboard(monkeypatch):
 
 # ------------------------------------------------------- the plan stage (multi-video)
 
-from app.pipeline import run_plan_stage, validate_parts  # noqa: E402
+from app.pipeline import _MIN_CHARS_TO_SPLIT, run_plan_stage, validate_parts  # noqa: E402
 
 
 def _fake_llm(monkeypatch, response):
@@ -659,10 +659,16 @@ def test_plan_validation_rejects_every_unusable_shape():
         assert validate_parts(bad) is None, bad
 
 
+#: Long enough that `run_plan_stage` actually asks the model. Below
+#: `_MIN_CHARS_TO_SPLIT` it answers "one part" without a round-trip, so a short
+#: string here would pass these tests without exercising the code they name.
+_SPLITTABLE = "word " * (_MIN_CHARS_TO_SPLIT // 4)
+
+
 def test_plan_stage_falls_back_to_a_single_part_on_garbage(monkeypatch):
     """Planning misbehaving must never fail the job — it collapses to one part."""
     _fake_llm(monkeypatch, _text_reply("I would rather chat than call tools."))
-    assert run_plan_stage(kind="aidoc", text="anything", doc_title="OTM Rearch") == [
+    assert run_plan_stage(kind="aidoc", text=_SPLITTABLE, doc_title="OTM Rearch") == [
         {"title": "OTM Rearch", "focus": ""}
     ]
 
@@ -672,13 +678,26 @@ def test_plan_stage_falls_back_when_the_call_blows_up(monkeypatch):
         raise RuntimeError("gateway down")
 
     _fake_llm(monkeypatch, boom)
-    assert len(run_plan_stage(kind="aidoc", text="anything")) == 1
+    assert len(run_plan_stage(kind="aidoc", text=_SPLITTABLE)) == 1
 
 
 def test_plan_stage_reads_a_tool_call(monkeypatch):
     plan = {"parts": [{"title": "A", "focus": "f"}, {"title": "B", "focus": "g"}]}
     _fake_llm(monkeypatch, SimpleNamespace(content=[SimpleNamespace(type="tool_use", input=plan, id="tu_1")]))
-    assert [p["title"] for p in run_plan_stage(kind="aidoc", text="anything")] == ["A", "B"]
+    assert [p["title"] for p in run_plan_stage(kind="aidoc", text=_SPLITTABLE)] == ["A", "B"]
+
+
+def test_a_short_source_is_one_part_without_asking_the_model(monkeypatch):
+    """The plan call is skipped entirely below the threshold — it cannot be answered
+    two ways, and it was a paid round-trip on the common case."""
+
+    def fail_if_called():
+        raise AssertionError("run_plan_stage must not call the model for a short source")
+
+    _fake_llm(monkeypatch, fail_if_called)
+    assert run_plan_stage(kind="aidoc", text="too short to split", doc_title="T") == [
+        {"title": "T", "focus": ""}
+    ]
 
 
 def test_single_part_leaves_the_title_unsuffixed(monkeypatch):

@@ -19,6 +19,7 @@ import logging
 import shutil
 import struct
 import subprocess
+import threading
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,17 @@ from pathlib import Path
 from ..config import settings
 
 log = logging.getLogger(__name__)
+
+#: One KPipeline per language, reused across scenes and across jobs.
+#:
+#: Constructing it loads Kokoro-82M, which measured ~3s — and it was constructed
+#: once PER SCENE, so a seven-scene reel paid for seven loads before speaking a
+#: word. The lock covers synthesis as well as construction: a torch module is not
+#: safe to call from two threads at once, and two jobs can voice concurrently in
+#: the background threadpool. Serialising costs nothing real, because synthesis is
+#: compute-bound and would contend for the same cores anyway.
+_PIPELINES: dict[str, object] = {}
+_PIPELINE_LOCK = threading.Lock()
 
 #: Spoken-word pace used only to *estimate* a silent clip's length.
 _WORDS_PER_SECOND = 160 / 60
@@ -97,9 +109,16 @@ def _synth_kokoro(text: str, path: Path, voice: str) -> bool:
         # matching G2P: "a" American, "b" British, "h" Hindi. This was pinned to "a",
         # so any non-American voice was phonemised as American and came out wrong —
         # which made the voice setting look like it did nothing.
-        pipeline = KPipeline(lang_code=voice[0] if voice else "a")
+        lang_code = voice[0] if voice else "a"
         rate = 24000
-        chunks = [audio for _, _, audio in pipeline(text, voice=voice, speed=settings.kokoro_speed)]
+        with _PIPELINE_LOCK:
+            pipeline = _PIPELINES.get(lang_code)
+            if pipeline is None:
+                pipeline = KPipeline(lang_code=lang_code)
+                _PIPELINES[lang_code] = pipeline
+            chunks = [
+                audio for _, _, audio in pipeline(text, voice=voice, speed=settings.kokoro_speed)
+            ]
         if not chunks:
             return False
         _write_float_wav(path, chunks, rate)

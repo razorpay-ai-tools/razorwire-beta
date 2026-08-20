@@ -23,8 +23,10 @@ Everything runs with ``cwd`` set to the work directory so ffmpeg takes bare file
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
+from concurrent import futures
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -182,6 +184,7 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
     last = len(segments) - 1
     seg_names: list[str] = []
     durations: list[float] = []
+    commands: list[list[str]] = []
 
     for index, segment in enumerate(segments):
         dur_s = max(0.8, segment.duration_ms / 1000)
@@ -216,7 +219,7 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
                     footage=segment.clip is not None,
                 ),
             ]
-        _run(
+        commands.append(
             [
                 "ffmpeg", "-y",
                 *inputs,
@@ -225,10 +228,24 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
                 "-r", str(fps),
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
                 seg_name,
-            ],
-            cwd=work,
+            ]
         )
         seg_names.append(seg_name)
+
+    # Segments share nothing: each reads its own stills and writes its own file, so
+    # they encode concurrently. Capped rather than unbounded because ffmpeg is already
+    # threaded internally — past a few, the encodes only contend for the same cores,
+    # and a long storyboard would otherwise launch a dozen at once.
+    workers = max(1, min(4, (os.cpu_count() or 2) - 1, len(commands)))
+    if workers == 1 or len(commands) == 1:
+        for cmd in commands:
+            _run(cmd, cwd=work)
+    else:
+        with futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            # list() re-raises the first failure, and the context manager waits for
+            # the rest, so a broken scene cannot leave the join pass reading a
+            # half-written segment.
+            list(pool.map(lambda cmd: _run(cmd, cwd=work), commands))
 
     _run(
         [

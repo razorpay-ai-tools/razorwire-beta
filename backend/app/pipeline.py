@@ -37,6 +37,10 @@ MAX_ATTEMPTS = 3
 # document summarisation stage only if truncating source proves insufficient.
 _MAX_SOURCE_CHARS = 32_000
 _LLM_TIMEOUT_SECONDS = 180.0
+#: Below this, `run_plan_stage` answers "one part" without a round-trip. 220 words of
+#: narration is the whole 90-second budget, and a source needs several times that
+#: before a second part has anything of its own to say.
+_MIN_CHARS_TO_SPLIT = 6_000
 
 _SYSTEM = f"""You turn internal Razorpay engineering documents into 60-second vertical explainer videos.
 
@@ -455,6 +459,13 @@ def run_plan_stage(*, kind: str, text: str, doc_title: str | None = None) -> lis
     """
     fallback = [{"title": doc_title or "", "focus": ""}]
     if not settings.llm_api_key:
+        return fallback
+    # A source this short cannot fill one 90-second video, let alone two, so the plan
+    # is knowable without asking: skip a whole paid round-trip on the common case.
+    # The threshold is deliberately conservative — roughly the length at which a
+    # document starts to carry more than one load-bearing storyline.
+    if len(text) < _MIN_CHARS_TO_SPLIT:
+        log.info("source is %d chars; one part without asking the model", len(text))
         return fallback
     try:
         from anthropic import Anthropic
