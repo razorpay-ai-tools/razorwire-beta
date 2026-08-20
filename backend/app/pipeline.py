@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 from .config import settings
 from .storyboard import (
@@ -37,6 +38,14 @@ MAX_ATTEMPTS = 3
 # document summarisation stage only if truncating source proves insufficient.
 _MAX_SOURCE_CHARS = 32_000
 _LLM_TIMEOUT_SECONDS = 180.0
+#: Total wall clock allowed across ALL attempts of one stage.
+#:
+#: The SDK's `timeout` is per HTTP operation — effectively an inactivity timeout —
+#: so a reasoning model that keeps streaming never trips it, and three attempts can
+#: stack. A 172k-character source spent 64 minutes here before the gateway gave up,
+#: with the job pinned at `scripting` the whole time. Checked between attempts: it
+#: cannot interrupt a call already in flight, but it stops us starting another.
+_STAGE_DEADLINE_SECONDS = 420.0
 #: Below this, `run_plan_stage` answers "one part" without a round-trip. 220 words of
 #: narration is the whole 90-second budget, and a source needs several times that
 #: before a second part has anything of its own to say.
@@ -233,7 +242,16 @@ def run_script_stage(
     messages: list[dict] = [{"role": "user", "content": prompt}]
     last_errors: list[str] = ["model produced no tool call"]
 
+    started = time.monotonic()
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        elapsed = time.monotonic() - started
+        if attempt > 1 and elapsed > _STAGE_DEADLINE_SECONDS:
+            log.warning(
+                "script stage out of budget after %.0fs on attempt %d; giving up",
+                elapsed,
+                attempt,
+            )
+            break
         response = client.messages.create(
             model=settings.llm_model,
             # glm-5p2 is a reasoning model: its thinking block alone can eat 4096 tokens
@@ -470,7 +488,15 @@ def run_plan_stage(*, kind: str, text: str, doc_title: str | None = None) -> lis
     try:
         from anthropic import Anthropic
 
-        client = Anthropic(api_key=settings.llm_api_key, base_url=settings.llm_base_url or None)
+        # Bounded exactly like the script stage. Left on SDK defaults this call could
+        # run 600s and then retry twice, so a slow gateway cost half an hour before
+        # the job even started scripting.
+        client = Anthropic(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url or None,
+            timeout=_LLM_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
         response = client.messages.create(
             model=settings.llm_model,
             # reasoning models think before they answer; see run_script_stage

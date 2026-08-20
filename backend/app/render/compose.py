@@ -71,8 +71,24 @@ class Segment:
     clip: Path | None = None
 
 
+#: Ceiling on one ffmpeg invocation. Generous — a whole-video join pass on a slow
+#: box takes tens of seconds, not minutes — but bounded, because an ffmpeg that
+#: hangs has nothing to time it out: the job sits in `rendering` forever and the
+#: browser polls it forever. Now that segments encode in a pool, one stuck process
+#: would also hold a worker for the rest of the run.
+_FFMPEG_TIMEOUT_SECONDS = 600
+
+
 def _run(cmd: list[str], cwd: Path) -> None:
-    result = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd, cwd=str(cwd), capture_output=True, text=True,
+            timeout=_FFMPEG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"ffmpeg did not finish within {_FFMPEG_TIMEOUT_SECONDS}s: {' '.join(cmd[:6])}…"
+        ) from exc
     if result.returncode != 0:
         tail = "\n".join(result.stderr.strip().splitlines()[-8:])
         raise RuntimeError(f"ffmpeg failed ({result.returncode}):\n{tail}")
