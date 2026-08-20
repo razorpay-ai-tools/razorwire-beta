@@ -48,9 +48,17 @@ def _store_supabase(mp4: Path, job_id: str) -> tuple[str, str]:
 
 
 def store_mp4(mp4: Path, job_id: str) -> tuple[str, str]:
-    """Persist the MP4, returning ``(media_url, storage_key)``."""
+    """Persist the MP4, returning ``(media_url, storage_key)``.
+
+    Supabase is preferred when configured, but a failed upload (SSL/cert, network,
+    misconfig) must not sink the whole job — fall back to local disk so the post is
+    still created and playable via the /media mount.
+    """
     if settings.supabase_storage_enabled:
-        return _store_supabase(mp4, job_id)
+        try:
+            return _store_supabase(mp4, job_id)
+        except Exception as exc:
+            log.warning("Supabase upload failed (%s); falling back to local storage", exc)
     return _store_local(mp4, job_id)
 
 

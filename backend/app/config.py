@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # --- pipeline -------------------------------------------------------------
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
+    #: Optional Anthropic-compatible gateway base URL (e.g. Razorpay's LiteLLM
+    #: gateway). Empty = the real Anthropic API. The SDK appends /v1/messages.
+    anthropic_base_url: str = ""
 
     # --- slack ingestion ------------------------------------------------------
     #: Restored here for the same reason as `work_dir` below: PR #5 added these and

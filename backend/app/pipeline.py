@@ -15,19 +15,22 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from .config import settings
 from .storyboard import (
     BrollMood,
+    MAX_NARRATION_SENTENCES,
     Storyboard,
     StoryboardInvalid,
+    sentence_count,
     tool_input_schema,
     validate_storyboard,
 )
 
 log = logging.getLogger(__name__)
 
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 6
 _MAX_SOURCE_CHARS = 60_000
 
 _SYSTEM = f"""You turn internal Razorpay engineering documents into 60-second vertical explainer videos.
@@ -41,10 +44,14 @@ Rules that matter more than style:
    heading of a message for a Slack thread. If the source does not say something, do not put it
    in the storyboard. A viewer must be able to check any claim against the source.
 
-2. DIAGRAMS ARE REAL. For architecture, emit actual Mermaid describing the actual components and
-   their actual direction of flow, using the document's real service and entity names. Maximum
-   {{max_nodes}} nodes, or it will be rejected as illegible on a phone. Prefer `graph TD` for a
-   vertical frame. Never invent a component the document does not mention.
+2. DIAGRAMS ARE A NARRATED WALKTHROUGH. For architecture, emit a `diagram` scene whose `steps`
+   are the flow — one hop per step: `src`, `dst`, an optional `label` (the action on that hop, e.g.
+   "create order API"), and `say` (one or two spoken sentences describing THAT hop). Use the
+   source's real component names. The diagram is BUILT from the steps and each box and arrow is
+   drawn on screen exactly as its `say` is spoken, so keep each `say` to its single hop and put the
+   steps in flow order. Do NOT write Mermaid yourself. At most {{max_nodes}} distinct components
+   across the steps. Never invent a hop the source does not describe. Also give a one-line
+   `narration` summarising the whole scene.
 
 3. NARRATION IS SPOKEN. Plain prose a voice reads aloud, at most {{max_sentences}} sentences per
    scene. No markdown, no bullet characters, no emoji, no stage directions, and never a URL —
@@ -57,9 +64,9 @@ Rules that matter more than style:
    close with an outro.
 
 4b. ARCHITECTURE IS ALWAYS A DIAGRAM. Never describe a system in prose or bullets when the
-   document gives you components and flow. When the document has both a current and a proposed
-   architecture, emit them as TWO SEPARATE `diagram` scenes, in that order, so the change is
-   visible rather than asserted. Every Mermaid graph must start with `graph LR` or `graph TD`.
+   document gives you components and flow — use a `diagram` scene with `steps`. When the document
+   has both a current and a proposed architecture, emit them as TWO SEPARATE `diagram` scenes, in
+   that order, so the change is visible rather than asserted.
 
 4c. `compare` IS A LIGHT DEVICE. Its per-side items do not survive into the final video, so use
    it only when the two labels alone carry the point. Anything with real content belongs in
@@ -73,6 +80,35 @@ Shape a story, not a summary: the problem, what changes, and what the viewer mus
 """
 
 _TOOL_NAME = "emit_storyboard"
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _clamp_narrations(candidate: dict) -> None:
+    """Trim each scene's narration to MAX_NARRATION_SENTENCES sentences, in place.
+
+    A weaker or translated model often over-writes by a sentence; repairing it here is
+    cheaper and more reliable than bouncing the whole storyboard back through a retry.
+    """
+    def clamp(text: str) -> str:
+        text = text.strip()
+        if sentence_count(text) > MAX_NARRATION_SENTENCES:
+            return " ".join(_SENTENCE_SPLIT.split(text)[:MAX_NARRATION_SENTENCES]).strip()
+        return text
+
+    scenes = candidate.get("scenes")
+    if not isinstance(scenes, list):
+        return
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
+        if isinstance(scene.get("narration"), str):
+            scene["narration"] = clamp(scene["narration"])
+        steps = scene.get("steps")
+        if isinstance(steps, list):
+            for step in steps:
+                if isinstance(step, dict) and isinstance(step.get("say"), str):
+                    step["say"] = clamp(step["say"])
 
 
 def _system_prompt() -> str:
@@ -138,7 +174,9 @@ def run_script_stage(
 
     from anthropic import Anthropic
 
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    client = Anthropic(
+        api_key=settings.anthropic_api_key, base_url=settings.anthropic_base_url or None
+    )
     tool = {
         "name": _TOOL_NAME,
         "description": "Emit the finished storyboard.",
@@ -150,7 +188,11 @@ def run_script_stage(
     for attempt in range(1, MAX_ATTEMPTS + 1):
         response = client.messages.create(
             model=settings.anthropic_model,
-            max_tokens=4096,
+            # Thinking-capable models (e.g. glm via the gateway) spend output tokens on
+            # reasoning before the tool call, and a large doc yields a large storyboard,
+            # so 4096 truncated the tool_use mid-JSON ("scenes: Field required"). 16k gives
+            # room for the reasoning plus the full storyboard.
+            max_tokens=16000,
             system=_system_prompt(),
             tools=[tool],
             tool_choice={"type": "tool", "name": _TOOL_NAME},
@@ -164,6 +206,16 @@ def run_script_stage(
             continue
 
         candidate = dict(block.input)
+        # Gateway-translated models (e.g. glm via LiteLLM) sometimes nest the whole
+        # payload under a single wrapper key instead of returning {meta, scenes}. Unwrap it.
+        if "scenes" not in candidate:
+            nested = next(
+                (v for v in candidate.values() if isinstance(v, dict) and "scenes" in v), None
+            )
+            if nested is not None:
+                candidate = dict(nested)
+        # Repair the most common model slip (an extra sentence) instead of retrying.
+        _clamp_narrations(candidate)
         # the pipeline owns these; the source fields are ours to set, not the model's
         candidate["source"] = {
             "kind": kind,
@@ -177,7 +229,18 @@ def run_script_stage(
         except StoryboardInvalid as invalid:
             last_errors = invalid.errors
             log.warning("storyboard invalid on attempt %d/%d: %s", attempt, MAX_ATTEMPTS, invalid.errors)
-            messages.append({"role": "assistant", "content": [block.model_dump()]})
+            # Echo back a CLEAN tool_use block (only the input fields). block.model_dump()
+            # also carries fields like `caller` that Anthropic-on-Bedrock via the LiteLLM
+            # gateway rejects on input ("tool_use.caller: Input should be a valid dictionary"),
+            # which 400s the whole self-repair retry.
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+                    ],
+                }
+            )
             messages.append(
                 {
                     "role": "user",

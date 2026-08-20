@@ -288,7 +288,10 @@ def _slack_storyboard(**source_overrides) -> dict:
             {
                 "type": "diagram",
                 "heading": "The gap",
-                "mermaid": "graph TD\n  A[Deploy] --> B[Pod ready]\n  B --> C[Traffic]",
+                "steps": [
+                    {"src": "Deploy", "dst": "Pod ready", "label": "rollout", "say": "A deploy rolls out and the pod reports itself ready."},
+                    {"src": "Pod ready", "dst": "Traffic", "label": "routed", "say": "Traffic is routed to the pod before it can finish a request."},
+                ],
                 "narration": "Traffic arrives before the pod can finish a request.",
                 "cite": "Ananya R, 16:40",
             },

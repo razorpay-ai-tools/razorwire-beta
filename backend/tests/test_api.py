@@ -105,6 +105,20 @@ def test_counts_nodes_through_edge_labels():
     assert mermaid_node_count("graph TD\n A -->|yes| B\n B --> C") == 3
 
 
+def test_derived_mermaid_quotes_edge_labels_with_special_chars():
+    """A hop label like 'create (gRPC)' must be quoted, or Mermaid's edge-label
+    lexer throws a parse error and the whole diagram silently blanks."""
+    from app.storyboard import DiagramStep, mermaid_from_steps
+
+    steps = [
+        DiagramStep(src="payments-upi", dst="Tokens Service", label="create (gRPC)", say="It calls the tokens service over gRPC."),
+        DiagramStep(src="Tokens Service", dst="payments-upi", label="VPA-by-id (lazy)", say="It resolves the VPA on first touch."),
+    ]
+    out = mermaid_from_steps(steps)
+    assert '-->|"create (gRPC)"|' in out
+    assert '-->|"VPA-by-id (lazy)"|' in out
+
+
 def test_rejects_uncited_factual_scene():
     data = load()
     del data["scenes"][1]["cite"]
@@ -123,7 +137,15 @@ def test_topic_source_does_not_need_cites():
 
 def test_rejects_runaway_narration():
     data = load()
-    data["scenes"][1]["narration"] = " ".join(["word"] * 80)
+    # Max out every scene's spoken content to blow the total-seconds budget. A
+    # diagram's spoken length is the sum of its per-hop `say`s, not its one-line
+    # narration, so inflate those instead.
+    for scene in data["scenes"]:
+        if scene["type"] == "diagram":
+            for step in scene["steps"]:
+                step["say"] = " ".join(["word"] * 40) + "."
+        else:
+            scene["narration"] = " ".join(["word"] * 70) + "."
     with pytest.raises(StoryboardInvalid) as exc:
         validate_storyboard(data, "script")
     assert any("ceiling" in e for e in exc.value.errors)

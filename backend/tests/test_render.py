@@ -38,7 +38,10 @@ _STORYBOARD = {
         {
             "type": "diagram",
             "heading": "The flow",
-            "mermaid": "graph TD\n  A[Start] --> B[Middle]\n  B --> C[End]",
+            "steps": [
+                {"src": "Start", "dst": "Middle", "label": "step one", "say": "It begins at the start and moves to the middle."},
+                {"src": "Middle", "dst": "End", "label": "step two", "say": "From the middle it carries on to the end."},
+            ],
             "narration": "Start goes to the middle, then to the end.",
         },
         {"type": "outro", "cta": "Read the spec", "narration": "Thanks for watching this test."},

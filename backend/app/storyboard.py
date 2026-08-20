@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 MAX_MERMAID_NODES = 7
-MAX_SPOKEN_SECONDS = 75  # 60s target, 75s hard ceiling
+MAX_SPOKEN_SECONDS = 180  # hop-by-hop diagram walkthroughs run longer; keep a generous ceiling
 _WORDS_PER_SECOND = 160 / 60
 
 # --- limits the renderer imposes -------------------------------------------------
@@ -69,7 +69,8 @@ FACTUAL_SCENE_TYPES = frozenset({"bullets", "diagram", "compare", "code"})
 GROUNDED_SOURCE_KINDS = frozenset({"aidoc", "slack"})
 
 #: Fields the pipeline owns. Stripped from the model's view of the contract.
-PIPELINE_OWNED_FIELDS = ("durationMs", "clipId")
+#: `mermaid` is derived from a diagram scene's `steps`, so the model never writes it.
+PIPELINE_OWNED_FIELDS = ("durationMs", "clipId", "mermaid")
 
 
 class BrollMood(str, Enum):
@@ -157,16 +158,42 @@ class BulletsScene(_SceneBase):
     )
 
 
+class DiagramStep(_Model):
+    """One hop of a diagram walkthrough — the single source of truth for both the
+    box/arrow drawn and the sentence narrated as it is drawn."""
+
+    src: str = Field(min_length=1, max_length=40, description="Source component — a real name from the source.")
+    dst: str = Field(min_length=1, max_length=40, description="Destination component — a real name from the source.")
+    label: str | None = Field(
+        default=None, max_length=40, description="What happens on this hop, e.g. 'create order API'."
+    )
+    say: str = Field(
+        min_length=10,
+        max_length=300,
+        description=(
+            "One or two spoken sentences describing THIS hop, grounded in the source. Plain prose, "
+            "no markdown/emoji/URLs. Narrated exactly as this box and arrow are drawn, so keep it to "
+            "the single hop."
+        ),
+    )
+
+
 class DiagramScene(_SceneBase):
     type: Literal["diagram"]
     heading: _Heading
-    mermaid: str = Field(
-        min_length=12,
+    steps: list[DiagramStep] = Field(
+        min_length=2,
+        max_length=MAX_MERMAID_NODES - 1,
         description=(
-            "Mermaid source for the real architecture in the document. Max "
-            f"{MAX_MERMAID_NODES} nodes. Prefer 'graph TD' for a 9:16 frame."
+            "The architecture as an ordered walkthrough — one hop per step, in flow order. The "
+            "diagram is built from these steps and each hop is drawn in sync with its `say`. Use the "
+            "source's real component names; never invent a hop the source does not describe. `narration` "
+            "is a one-line summary of the whole scene; the per-hop `say`s carry the detail."
         ),
     )
+    #: PIPELINE-DERIVED from `steps` (stripped from the tool schema). Kept so the feed
+    #: reel, render_contract and the even-spaced fallback still have a diagram to show.
+    mermaid: str | None = Field(default=None)
 
 
 class CompareScene(_SceneBase):
@@ -226,8 +253,16 @@ class Storyboard(_Model):
 
 
 def spoken_seconds(sb: Storyboard) -> float:
-    """Rough spoken length. Rejects a runaway script before we pay for TTS."""
-    words = sum(len(scene.narration.split()) for scene in sb.scenes)
+    """Rough spoken length. Rejects a runaway script before we pay for TTS.
+
+    A diagram scene's real audio is the sum of its per-hop ``say``s, not its
+    one-line ``narration`` summary."""
+    words = 0
+    for scene in sb.scenes:
+        if isinstance(scene, DiagramScene) and scene.steps:
+            words += sum(len(step.say.split()) for step in scene.steps)
+        else:
+            words += len(scene.narration.split())
     return words / _WORDS_PER_SECOND
 
 
@@ -322,6 +357,40 @@ def mermaid_node_count(src: str) -> int:
     return len(ids)
 
 
+def _mermaid_safe(text: str) -> str:
+    return text.replace('"', "'").replace("|", "/")
+
+
+def mermaid_from_steps(steps: list[DiagramStep]) -> str:
+    """Build a ``graph TD`` from the walkthrough steps — the single source of truth.
+
+    Because the diagram AND the narration both come from the same ordered steps, they
+    cannot drift in count or order; the render stage reveals each hop in sync with its
+    ``say``.
+    """
+    order: list[str] = []
+    for step in steps:
+        for label in (step.src, step.dst):
+            if label not in order:
+                order.append(label)
+    ids = {label: f"n{i}" for i, label in enumerate(order)}
+    lines = ["graph TD"]
+    for label in order:
+        low = label.lower()
+        is_store = "database" in low or low.endswith(("_setups", "_store", "db", "table"))
+        node = f'[("{_mermaid_safe(label)}")]' if is_store else f'["{_mermaid_safe(label)}"]'
+        lines.append(f"  {ids[label]}{node}")
+    for step in steps:
+        if step.label:
+            # Quote the edge label: Mermaid's edge-label lexer rejects unquoted
+            # special characters (parentheses, etc.), which silently blanks the
+            # whole diagram. `_mermaid_safe` has already removed any inner quote.
+            lines.append(f'  {ids[step.src]} -->|"{_mermaid_safe(step.label)}"| {ids[step.dst]}')
+        else:
+            lines.append(f"  {ids[step.src]} --> {ids[step.dst]}")
+    return "\n".join(lines)
+
+
 class StoryboardInvalid(ValueError):
     """Raised with every problem found, not just the first."""
 
@@ -363,7 +432,18 @@ def validate_storyboard(data: Any, stage: Literal["script", "render"] = "script"
         check_narration(at, scene.narration, errors)
 
         if isinstance(scene, DiagramScene):
-            check_mermaid(at, scene.mermaid, errors)
+            if scene.steps:
+                # Derive the diagram from the steps (single source of truth) and check
+                # each hop's spoken line like any other narration.
+                if not scene.mermaid:
+                    scene.mermaid = mermaid_from_steps(scene.steps)
+                for j, step in enumerate(scene.steps):
+                    check_narration(f"{at}.steps.{j}.say", step.say, errors)
+                check_mermaid(at, scene.mermaid, errors)
+            elif scene.mermaid:
+                check_mermaid(at, scene.mermaid, errors)
+            else:
+                errors.append(f"{at} diagram needs `steps` (an ordered hop-by-hop walkthrough)")
 
         if (
             sb.source.kind in GROUNDED_SOURCE_KINDS
