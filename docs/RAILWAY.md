@@ -77,3 +77,39 @@ Current AiSites URL:
 ```txt
 https://razorwire.aisites.razorpay.com/
 ```
+
+## aidocs ingestion (required)
+
+Without these, every document fetch fails and `GET /health` reports
+`aidocs.ready = "no"`. The container has no `aidocs` CLI and no Google session to
+inherit, so a service-account token is the only path.
+
+```
+AIDOCS_SERVER = https://aidocs.razorpay.com
+AIDOCS_TOKEN  = <service-account key>
+```
+
+Mint one:
+
+```bash
+aidocs sa create razorwire-ingest          # once; gives sa_...
+aidocs sa key create <sa_id> --name railway
+```
+
+The secret is shown once. Keys are independent, so revoke one without breaking the
+others: `aidocs sa key list <sa_id>` then `aidocs sa key revoke <sa_id> <key_id>`.
+
+Never commit the token. This repo is public, and the key reads any document shared
+with the org.
+
+### Check it from outside
+
+```bash
+curl -s https://<service>.up.railway.app/health | jq .aidocs
+```
+
+| `ready` | Meaning |
+|---|---|
+| `yes` | service-account token present |
+| `probably` | no token, falling back to the CLI — will not work in a container |
+| `no` | no token and no CLI; every fetch will fail |

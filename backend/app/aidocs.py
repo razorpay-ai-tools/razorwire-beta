@@ -328,6 +328,41 @@ def _pull_over_cli(doc_id: str) -> PulledDoc:
     return PulledDoc(html=result.stdout)
 
 
+def credential_status() -> dict[str, str]:
+    """How this deployment will authenticate to aidocs, and whether it can at all.
+
+    Exists because finding this out cost a whole afternoon: the hosted backend failed
+    every document with an opaque 401, and the only way to see why was to submit a job
+    with a deliberately nonexistent doc id and read the error. A deployment should be
+    able to say "I have no aidocs credential" without being asked to fetch something.
+
+    Reported by ``GET /health``, so one request answers it.
+    """
+    if settings.aidocs_token:
+        return {
+            "mode": "service_account",
+            "ready": "yes",
+            "detail": f"bearer token against {settings.aidocs_server}",
+        }
+    if shutil.which("aidocs") is not None:
+        return {
+            "mode": "cli",
+            "ready": "probably",
+            "detail": (
+                "no AIDOCS_TOKEN; using the aidocs CLI's own session. Fine on a laptop, "
+                "and it has no session to inherit in a container."
+            ),
+        }
+    return {
+        "mode": "none",
+        "ready": "no",
+        "detail": (
+            "no AIDOCS_TOKEN and no aidocs CLI. Every document fetch will fail. Set "
+            "AIDOCS_TOKEN to a service-account key from `aidocs sa key create <sa_id>`."
+        ),
+    }
+
+
 def _pull(doc_id: str) -> PulledDoc:
     """HTTP when we hold a token, CLI when we do not."""
     if settings.aidocs_token:

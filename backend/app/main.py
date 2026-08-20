@@ -33,7 +33,7 @@ from pydantic.alias_generators import to_camel
 from sqlalchemy import func
 from sqlmodel import Session, col, delete, select
 
-from .aidocs import AidocsUnavailable, fetch_doc
+from .aidocs import AidocsUnavailable, credential_status, fetch_doc
 from .auth import current_user
 from .config import settings
 from .models import (
@@ -61,6 +61,15 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    # Say it once, loudly, at boot. A deployment that cannot read documents should not
+    # have to be asked to fetch one before it admits that.
+    status_ = credential_status()
+    if status_["ready"] == "no":
+        log.error("aidocs ingestion is NOT configured: %s", status_["detail"])
+    elif status_["mode"] == "cli":
+        log.warning("aidocs ingestion via %s", status_["detail"])
+    else:
+        log.info("aidocs ingestion via %s", status_["detail"])
     yield
 
 
@@ -392,8 +401,13 @@ def _channels_out(session: Session, user: User, channels: list[Channel]) -> list
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    """Liveness, plus whether this deployment can actually ingest anything.
+
+    Unauthenticated on purpose — it is the first thing anyone checks. It reports
+    configuration, never credential values.
+    """
+    return {"status": "ok", "aidocs": credential_status()}
 
 
 @app.get("/me", response_model=UserOut)
