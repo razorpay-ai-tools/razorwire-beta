@@ -13,12 +13,16 @@ export const BROLL_MOODS = ['dataflow', 'servers', 'team', 'money', 'abstract', 
 export type BrollMood = 'dataflow' | 'servers' | 'team' | 'money' | 'abstract' | 'city';
 
 export const MAX_MERMAID_NODES = 7;
-export const MAX_SPOKEN_SECONDS = 75;
+export const MAX_SPOKEN_SECONDS = 180;
 
 /** Assigned by the visual resolver, never by the model. */
 export type Broll = { mood: BrollMood; clipId?: string };
 
 export type ComparePane = { label: string; items: string[] };
+
+/** One hop of a diagram walkthrough. The diagram AND the narration are built from
+ * these, so they cannot drift; each hop is drawn in sync with its `say`. */
+export type DiagramStep = { src: string; dst: string; label?: string; say: string };
 
 type SceneBase = {
   narration: string;
@@ -31,7 +35,14 @@ type SceneBase = {
 
 export type TitleScene = SceneBase & { type: 'title'; heading: string; sub?: string };
 export type BulletsScene = SceneBase & { type: 'bullets'; heading: string; bullets: string[] };
-export type DiagramScene = SceneBase & { type: 'diagram'; heading: string; mermaid: string };
+export type DiagramScene = SceneBase & {
+  type: 'diagram';
+  heading: string;
+  /** The walkthrough, in flow order. Source of truth for the diagram and narration. */
+  steps: DiagramStep[];
+  /** Derived from `steps` by the pipeline; what the reel and MP4 actually draw. */
+  mermaid: string;
+};
 export type CompareScene = SceneBase & {
   type: 'compare';
   heading: string;

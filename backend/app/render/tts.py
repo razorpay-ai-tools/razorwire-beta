@@ -16,6 +16,7 @@ audio, never from the model. Duration is read back off the file with the stdlib
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import struct
 import subprocess
@@ -29,8 +30,13 @@ log = logging.getLogger(__name__)
 
 #: Spoken-word pace used only to *estimate* a silent clip's length.
 _WORDS_PER_SECOND = 160 / 60
-_SAY_RATE = 22050
+_SAY_RATE = 22050  # wav sample rate
+_SAY_WPM = 168  # speech pace (words/min); a touch under the ~175 default, less rushed
 _MIN_MS = 800  # the schema floor for scene.durationMs
+
+#: say embedded pause commands, injected at punctuation so it reads like a person.
+_PAUSE_SENTENCE = re.compile(r"([.!?])(\s+)")
+_PAUSE_CLAUSE = re.compile(r"([,;:])(\s+)")
 
 
 @dataclass(frozen=True)
@@ -40,6 +46,9 @@ class Voiced:
     index: int
     wav_path: Path
     duration_ms: int
+    #: For a stepped diagram scene: the start time (ms) of each hop's beat within the
+    #: scene audio, so the render can reveal each hop exactly when its beat is spoken.
+    beat_starts: list[int] | None = None
 
 
 def _wav_duration_ms(path: Path) -> int:
@@ -68,16 +77,25 @@ def _write_silence(path: Path, ms: int, rate: int = _SAY_RATE) -> None:
         handle.writeframes(b"\x00\x00" * count)
 
 
+def _humanize(text: str) -> str:
+    """Insert brief pauses so `say` follows punctuation like a person speaking.
+    ``[[slnc N]]`` is a say embedded command for N ms of silence."""
+    text = _PAUSE_SENTENCE.sub(r"\1 [[slnc 340]]\2", text)
+    text = _PAUSE_CLAUSE.sub(r"\1 [[slnc 160]]\2", text)
+    return text
+
+
 def _synth_say(text: str, path: Path) -> bool:
     """macOS `say` -> WAV. Returns False if `say` is absent or fails."""
     if shutil.which("say") is None:
         return False
     try:
         subprocess.run(
-            ["say", "-o", str(path), "--data-format=LEI16@%d" % _SAY_RATE, text],
+            ["say", "-o", str(path), "--data-format=LEI16@%d" % _SAY_RATE,
+             "-r", str(_SAY_WPM), _humanize(text)],
             check=True,
             capture_output=True,
-            timeout=120,
+            timeout=180,
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         log.warning("say failed: %s", exc)
@@ -164,3 +182,35 @@ def voice_scenes(narrations: list[str], work_dir: Path, **kwargs) -> list[Voiced
         duration = synthesize(text, wav, **kwargs)
         out.append(Voiced(index=index, wav_path=wav, duration_ms=duration))
     return out
+
+
+def _concat_wavs(paths: list[Path], out: Path) -> None:
+    """Concatenate same-format WAVs with the stdlib (no ffmpeg needed)."""
+    with wave.open(str(paths[0]), "rb") as first:
+        params = first.getparams()
+    with wave.open(str(out), "wb") as combined:
+        combined.setparams(params)
+        for path in paths:
+            with wave.open(str(path), "rb") as clip:
+                combined.writeframes(clip.readframes(clip.getnframes()))
+
+
+def voice_steps(says: list[str], work_dir: Path, index: int, **kwargs) -> tuple[Path, int, list[int]]:
+    """Speak each hop's ``say`` as its own clip, concatenate into one scene wav, and
+    return ``(scene_wav, total_ms, beat_start_times_ms)``.
+
+    Beat starts are measured off the real clips, so a diagram reveal keyed to them
+    stays exactly in sync with the voice.
+    """
+    work_dir.mkdir(parents=True, exist_ok=True)
+    beat_paths: list[Path] = []
+    durations: list[int] = []
+    for i, say in enumerate(says):
+        beat = work_dir / f"scene{index}_beat{i}.wav"
+        synthesize(say, beat, **kwargs)
+        beat_paths.append(beat)
+        durations.append(_wav_duration_ms(beat))
+    scene_wav = work_dir / f"scene{index}.wav"
+    _concat_wavs(beat_paths, scene_wav)
+    starts = [sum(durations[:i]) for i in range(len(durations))]
+    return scene_wav, _wav_duration_ms(scene_wav), starts

@@ -391,20 +391,84 @@
           "title": "Heading",
           "type": "string"
         },
+        "steps": {
+          "description": "The architecture as an ordered walkthrough \u2014 one hop per step, in flow order. The diagram is built from these steps and each hop is drawn in sync with its `say`. Use the source's real component names; never invent a hop the source does not describe. `narration` is a one-line summary of the whole scene; the per-hop `say`s carry the detail.",
+          "items": {
+            "$ref": "#/$defs/DiagramStep"
+          },
+          "maxItems": 6,
+          "minItems": 2,
+          "title": "Steps",
+          "type": "array"
+        },
         "mermaid": {
-          "description": "Mermaid source for the real architecture in the document. Max 7 nodes. Prefer 'graph TD' for a 9:16 frame.",
-          "minLength": 12,
-          "title": "Mermaid",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mermaid"
         }
       },
       "required": [
         "narration",
         "type",
         "heading",
-        "mermaid"
+        "steps"
       ],
       "title": "DiagramScene",
+      "type": "object"
+    },
+    "DiagramStep": {
+      "additionalProperties": false,
+      "description": "One hop of a diagram walkthrough \u2014 the single source of truth for both the\nbox/arrow drawn and the sentence narrated as it is drawn.",
+      "properties": {
+        "src": {
+          "description": "Source component \u2014 a real name from the source.",
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Src",
+          "type": "string"
+        },
+        "dst": {
+          "description": "Destination component \u2014 a real name from the source.",
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Dst",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What happens on this hop, e.g. 'create order API'.",
+          "title": "Label"
+        },
+        "say": {
+          "description": "One or two spoken sentences describing THIS hop, grounded in the source. Plain prose, no markdown/emoji/URLs. Narrated exactly as this box and arrow are drawn, so keep it to the single hop.",
+          "maxLength": 300,
+          "minLength": 10,
+          "title": "Say",
+          "type": "string"
+        }
+      },
+      "required": [
+        "src",
+        "dst",
+        "say"
+      ],
+      "title": "DiagramStep",
       "type": "object"
     },
     "OutroScene": {
@@ -522,6 +586,7 @@
         "kind": {
           "enum": [
             "aidoc",
+            "slack",
             "topic"
           ],
           "title": "Kind",
@@ -550,6 +615,7 @@
             }
           ],
           "default": null,
+          "description": "Required when kind is slack: the thread permalink.",
           "title": "Url"
         },
         "title": {

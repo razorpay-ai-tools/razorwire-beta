@@ -64,8 +64,40 @@
     {
       "type": "diagram",
       "heading": "The rearch path",
+      "steps": [
+        {
+          "src": "Edge",
+          "dst": "pg-router",
+          "label": "route request",
+          "say": "A request first lands at Edge, the entry point, which forwards it to pg-router."
+        },
+        {
+          "src": "pg-router",
+          "dst": "CPS",
+          "label": "Splitz picks rearch",
+          "say": "pg-router evaluates a Splitz experiment to choose rearch or legacy; on the rearch path it sends the request to CPS."
+        },
+        {
+          "src": "CPS",
+          "dst": "payments-upi",
+          "label": "forward",
+          "say": "CPS hands the request on to the payments-upi service."
+        },
+        {
+          "src": "payments-upi",
+          "dst": "payments-mandate",
+          "label": "create mandate",
+          "say": "payments-upi calls payments-mandate, the new service that owns the mandate rules."
+        },
+        {
+          "src": "payments-mandate",
+          "dst": "mandate_setups",
+          "label": "persist",
+          "say": "Finally, payments-mandate writes the mandate setup into the mandate_setups store."
+        }
+      ],
       "mermaid": "graph TD\n  A[Edge] --> B[pg-router]\n  B --> C[CPS]\n  C --> D[payments-upi]\n  D --> E[payments-mandate]\n  E --> F[(mandate_setups)]",
-      "narration": "A request enters at Edge, and pg-router evaluates a Splitz experiment to decide rearch or legacy. If it is rearch, it flows through CPS and payments-upi into payments-mandate, which persists the mandate setup.",
+      "narration": "A request flows from Edge through pg-router, CPS and payments-upi into payments-mandate, which persists the mandate setup.",
       "cite": "Section 4.1 - Request Flow",
       "broll": {
         "mood": "dataflow"

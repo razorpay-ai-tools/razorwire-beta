@@ -19,6 +19,18 @@ Nothing leaves the perimeter and there is no per-render cost.
 
 from __future__ import annotations
 
-from .pipeline import RenderResult, RenderUnavailable, render_video, voice_storyboard
+from .pipeline import (
+    RenderResult,
+    RenderUnavailable,
+    render_from_voiced,
+    render_video,
+    voice_storyboard,
+)
 
-__all__ = ["RenderResult", "RenderUnavailable", "render_video", "voice_storyboard"]
+__all__ = [
+    "RenderResult",
+    "RenderUnavailable",
+    "render_from_voiced",
+    "render_video",
+    "voice_storyboard",
+]
