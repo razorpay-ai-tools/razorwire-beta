@@ -4,7 +4,8 @@ import Script from 'next/script';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Razorwire',
+  // Cased as the header and the intro word render it.
+  title: 'RazorWire',
   description: 'Every tech spec ships with a 60-second explainer.',
 };
 
