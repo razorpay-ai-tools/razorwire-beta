@@ -838,21 +838,6 @@ def _render_and_publish(
     job.state, job.progress = "published", _scaled(100, span)
 
 
-def _reel_tts_is_silent(voiced) -> bool:
-    """True when every spoken track is all zero samples — no TTS engine produced a
-    voice, and a silent audio track is strictly worse than the Web Speech fallback."""
-    import wave
-
-    for spoken in voiced:
-        try:
-            with wave.open(str(spoken.wav_path), "rb") as handle:
-                if any(handle.readframes(handle.getnframes())):
-                    return False
-        except Exception:
-            continue
-    return True
-
-
 def _voice_reel(
     session: Session,
     job: Job,
@@ -868,32 +853,20 @@ def _voice_reel(
     Never fails the job: missing ffmpeg, no TTS voice, or a failed encode just leaves
     ``audioUrl`` unset and the reel narrates in the browser exactly as before.
     ``media_id`` keys this part's scene audio when a job publishes several parts.
+
+    The voicing and encoding themselves live in ``render.publish`` so the repair script
+    re-voices old posts through exactly this path rather than a copy of it.
     """
-    import shutil
-    import subprocess
+    from .render.publish import voice_scenes_to_media
 
-    from .render import voice_storyboard
-
-    if shutil.which("ffmpeg") is None:
-        log.info("ffmpeg missing; reel %s keeps Web Speech narration", job.id)
-        return
+    key = media_id or job.id
     try:
         job.state, job.progress, job.updated_at = "voicing", _scaled(45, span), utcnow()
         session.add(job)
         session.commit()
 
-        voiced = voice_storyboard(storyboard, Path(settings.work_dir) / (media_id or job.id))
-        if _reel_tts_is_silent(voiced):
-            log.info("no TTS voice available; reel %s keeps Web Speech narration", job.id)
-            return
-        for scene, spoken in zip(storyboard.scenes, voiced):
-            name = f"{media_id or job.id}_scene{spoken.index}.m4a"
-            subprocess.run(
-                ["ffmpeg", "-y", "-i", str(spoken.wav_path), "-c:a", "aac", "-b:a", "96k",
-                 str(MEDIA_DIR / name)],
-                check=True, capture_output=True, timeout=120,
-            )
-            scene.audio_url = f"/media/{name}"
+        if not voice_scenes_to_media(storyboard, Path(settings.work_dir) / key, key):
+            log.info("no reel audio for %s; keeping Web Speech narration", job.id)
     except Exception as exc:
         log.warning("reel voicing failed (%s); publishing without audio", exc)
         for scene in storyboard.scenes:

@@ -100,9 +100,14 @@ class Settings(BaseSettings):
     kokoro_voice: str = "af_heart"
     #: Slightly under 1.0 reads as a person explaining, not a system announcing.
     kokoro_speed: float = 0.95
-    #: Hard cap on a single scene's spoken length so one runaway scene cannot
-    #: stretch the render; longer scenes are clamped.
-    render_scene_max_ms: int = 15000
+    #: Backstop against a TTS engine that loops or never terminates — NOT a budget.
+    #: The clamp caps the duration we record while the wav keeps its real length, so
+    #: a ceiling under the longest legitimate narration silently truncates the voice:
+    #: at 15s it was cutting 22% of scenes short, up to 6.3s, and the reel advanced
+    #: mid-sentence. Narration is capped at 420 characters (~70 words), which is ~28s
+    #: at this voice and speed, so 30s cannot clip real speech. Total length is
+    #: governed by MAX_SPOKEN_SECONDS in storyboard.py, which is the actual budget.
+    render_scene_max_ms: int = 30000
     #: Background footage library: <mood>.mp4 per broll mood. Shared with the web
     #: app's /broll/<clipId>.mp4 path, hence the default inside public/. A scene
     #: whose mood has no clip here falls back to the CSS gradient.

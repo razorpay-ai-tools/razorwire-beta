@@ -3,11 +3,18 @@
 The MP4 goes to media storage (Supabase when configured, local disk otherwise) and
 the DB row keeps only the pointer plus metadata. Setting ``job.post_id`` is what the
 web app polls for: `GeneratePanel` navigates to the post the moment it appears.
+
+``voice_scenes_to_media`` lives here too: it is the other thing this module owns, a
+storyboard turned into files under ``media_dir``. Two callers share it — the generate
+path (``main._voice_reel``) and the repair script (``scripts/revoice.py``).
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
+import subprocess
+import wave
 from pathlib import Path
 
 import httpx
@@ -17,9 +24,54 @@ from ..config import settings
 from ..models import Job, Post, utcnow
 from ..pipeline import storyboard_to_json
 from ..storyboard import Storyboard
-from .pipeline import RenderResult
+from .pipeline import RenderResult, voice_storyboard
 
 log = logging.getLogger(__name__)
+
+
+def _tts_is_silent(voiced) -> bool:
+    """True when every spoken track is all zero samples — no TTS engine produced a
+    voice, and a silent audio track is strictly worse than the Web Speech fallback."""
+    for spoken in voiced:
+        try:
+            with wave.open(str(spoken.wav_path), "rb") as handle:
+                if any(handle.readframes(handle.getnframes())):
+                    return False
+        except Exception:
+            continue
+    return True
+
+
+def voice_scenes_to_media(sb: Storyboard, work_dir: Path, media_id: str) -> bool:
+    """Speak every scene, encode each to AAC under ``media_dir``, stamp the storyboard.
+
+    Leaves ``durationMs`` (measured off the wav) and ``audioUrl`` on every scene and
+    returns True. Returns False *without touching the storyboard* when there is nothing
+    worth playing — no ffmpeg to encode with, or no TTS engine, in which case the reel
+    narrates with the Web Speech API exactly as it did before. Raises only on a failed
+    encode, which the caller decides what to do about.
+
+    ``media_id`` names the files (``<media_id>_scene<n>.m4a``), so it has to be unique
+    per published thing: a job part id on the generate path, a post id on the repair
+    path. Re-running with the same id overwrites in place, which is what makes the
+    repair script idempotent.
+    """
+    if shutil.which("ffmpeg") is None:
+        return False
+    voiced = voice_storyboard(sb, work_dir)
+    if _tts_is_silent(voiced):
+        return False
+    media_dir = Path(settings.media_dir)
+    media_dir.mkdir(parents=True, exist_ok=True)
+    for scene, spoken in zip(sb.scenes, voiced):
+        name = f"{media_id}_scene{spoken.index}.m4a"
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(spoken.wav_path), "-c:a", "aac", "-b:a", "96k",
+             str(media_dir / name)],
+            check=True, capture_output=True, timeout=120,
+        )
+        scene.audio_url = f"/media/{name}"
+    return True
 
 
 def _store_local(mp4: Path, job_id: str) -> tuple[str, str]:
