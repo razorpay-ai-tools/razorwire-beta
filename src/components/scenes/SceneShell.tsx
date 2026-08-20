@@ -46,7 +46,22 @@ const RAIL_CLEARANCE = 'pr-[4.75rem]';
 
 export function SceneShell({ cite, active, centered = false, children }: SceneShellProps) {
   return (
-    <div className={`scene-safe flex h-full w-full flex-col ${centered ? '' : RAIL_CLEARANCE}`}>
+    /*
+     * The entry animation sits HERE, on the whole frame, not on the content column
+     * below. It used to be on the column, which left the citation chip outside it: on
+     * every scene change the chip snapped in while the content faded, so the two halves
+     * of the same scene arrived at different times. One scene, one entrance.
+     *
+     * `SceneView` keys the template on the scene, which is what makes this replay for
+     * every scene rather than only the first — a CSS animation runs on mount and never
+     * again. Reduced motion needs nothing here: the global rule in globals.css crushes
+     * the duration, so those viewers get the scene immediately.
+     */
+    <div
+      className={`scene-safe flex h-full w-full flex-col ${centered ? '' : RAIL_CLEARANCE} ${
+        active ? 'animate-fade-in' : ''
+      }`}
+    >
       {/*
        * The chip leads the scene rather than trailing it. Below the content it landed
        * on the author row, because the bottom of the safe area is exactly where the
@@ -57,7 +72,7 @@ export function SceneShell({ cite, active, centered = false, children }: SceneSh
       <div
         className={`flex min-h-0 flex-1 flex-col justify-center ${
           centered ? 'items-center gap-5 text-center' : 'gap-3'
-        } ${active ? 'animate-fade-in' : ''}`}
+        }`}
       >
         {children}
       </div>

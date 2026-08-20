@@ -101,6 +101,39 @@ def test_voice_scenes_writes_one_wav_per_scene(tmp_path):
     assert all(v.wav_path.exists() and v.duration_ms >= 800 for v in voiced)
 
 
+# ------------------------------------------------------------------------ compose
+
+
+def test_scene_transitions_start_where_the_narration_hands_over():
+    """The one invariant that keeps the MP4 in sync, asserted without ffmpeg.
+
+    `xfade` overlaps its inputs, so N segments joined with a D-second transition come
+    out (N-1)*D shorter than their sum. compose() pays for that by holding every scene
+    but the last for an extra D, which makes each transition's offset land exactly on
+    the sum of the PRECEDING narration durations — the same instant the concatenated
+    audio hands over to that scene. Get the padding wrong and the offsets slide left
+    once per join, and every scene's visuals run ahead of its voice.
+    """
+    import re
+
+    from app.render import compose
+
+    durations = [8.5, 12.15, 11.3, 4.275]
+    graph = compose._join_filter(len(durations), durations)
+
+    offsets = [float(value) for value in re.findall(r"xfade=[^;]*?offset=([0-9.]+)", graph)]
+    expected = [sum(durations[:index]) for index in range(1, len(durations))]
+    assert offsets == pytest.approx(expected, abs=0.001)
+
+    # Drop the padding and this is what you get instead: the drift, accumulating.
+    unpadded = [total - (i + 1) * compose.SCENE_XFADE_S for i, total in enumerate(expected)]
+    assert offsets != pytest.approx(unpadded, abs=0.001)
+
+    # Audio is concatenated, never cross-faded, so no scene's tail is ramped down.
+    assert "acrossfade" not in graph
+    assert f"concat=n={len(durations)}:v=0:a=1" in graph
+
+
 # ------------------------------------------------------------------------ publish
 
 

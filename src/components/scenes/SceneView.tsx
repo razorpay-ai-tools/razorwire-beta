@@ -31,25 +31,50 @@ export interface SceneViewProps {
   progress?: number | null;
 }
 
+/**
+ * Identity of the scene being shown, as a React key.
+ *
+ * This is what makes the reel's scene change ANIMATE. The feed keeps SceneView mounted
+ * and swaps `scene` underneath it, so two consecutive bullets scenes were the same
+ * element in the same position: React reused the DOM, and SceneShell's entry animation
+ * — a CSS animation, which only runs on mount — never fired again. Scenes therefore
+ * snapped in. A key that changes with the scene remounts the template, and the fade
+ * plays for every scene rather than only the first.
+ *
+ * `narration` is required on every scene by the contract and is what the scene is
+ * about, so it identifies one. Two adjacent scenes that somehow shared a type and a
+ * narration would simply not re-animate — no flicker, no double render.
+ */
+function sceneKey(scene: Scene): string {
+  return `${scene.type}:${scene.narration}`;
+}
+
 export function SceneView({ scene, active, progress = null }: SceneViewProps): React.ReactElement {
+  const key = sceneKey(scene);
   switch (scene.type) {
     case 'title':
-      return <TitleScene scene={scene} active={active} />;
+      return <TitleScene key={key} scene={scene} active={active} />;
     case 'bullets':
-      return <BulletsScene scene={scene} active={active} progress={progress} />;
+      return <BulletsScene key={key} scene={scene} active={active} progress={progress} />;
     case 'diagram':
-      return <DiagramScene scene={scene} active={active} progress={progress} />;
+      return <DiagramScene key={key} scene={scene} active={active} progress={progress} />;
     case 'compare':
-      return <CompareScene scene={scene} active={active} />;
+      return <CompareScene key={key} scene={scene} active={active} />;
     case 'code':
-      return <CodeScene scene={scene} active={active} />;
+      return <CodeScene key={key} scene={scene} active={active} />;
     case 'outro':
-      return <OutroScene scene={scene} active={active} />;
+      return <OutroScene key={key} scene={scene} active={active} />;
     default: {
       // Compile-time exhaustiveness. Reachable at runtime only if the backend sends a
       // type this build has never heard of, which is a deploy skew, not a viewer error.
       const unreachable: never = scene;
-      return <UnsupportedScene type={(unreachable as { type?: string }).type} active={active} />;
+      return (
+        <UnsupportedScene
+          key={key}
+          type={(unreachable as { type?: string }).type}
+          active={active}
+        />
+      );
     }
   }
 }
