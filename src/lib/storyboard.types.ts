@@ -13,7 +13,7 @@ export const BROLL_MOODS = ['dataflow', 'servers', 'team', 'money', 'abstract', 
 export type BrollMood = 'dataflow' | 'servers' | 'team' | 'money' | 'abstract' | 'city';
 
 export const MAX_MERMAID_NODES = 7;
-export const MAX_SPOKEN_SECONDS = 75;
+export const MAX_SPOKEN_SECONDS = 105;
 
 /** Assigned by the visual resolver, never by the model. */
 export type Broll = { mood: BrollMood; clipId?: string };
@@ -27,6 +27,8 @@ type SceneBase = {
   broll?: Broll;
   /** Set by the voice stage from measured audio length. Absent on the browser-reel path. */
   durationMs?: number;
+  /** Set at publish: pre-generated narration audio. Absent means Web Speech narrates. */
+  audioUrl?: string;
 };
 
 export type TitleScene = SceneBase & { type: 'title'; heading: string; sub?: string };

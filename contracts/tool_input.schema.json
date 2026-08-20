@@ -439,6 +439,7 @@
         "kind": {
           "enum": [
             "aidoc",
+            "slack",
             "topic"
           ],
           "title": "Kind",
@@ -467,6 +468,7 @@
             }
           ],
           "default": null,
+          "description": "Required when kind is slack: the thread permalink.",
           "title": "Url"
         },
         "title": {
@@ -566,7 +568,7 @@
       "$ref": "#/$defs/StoryboardSource"
     },
     "scenes": {
-      "description": "4-6 scenes, under 60 seconds spoken in total. Byte-sized reel.",
+      "description": "4-8 scenes, 60 to 90 seconds spoken in total. Byte-sized reel.",
       "items": {
         "discriminator": {
           "mapping": {
@@ -600,7 +602,7 @@
           }
         ]
       },
-      "maxItems": 6,
+      "maxItems": 8,
       "minItems": 4,
       "title": "Scenes",
       "type": "array"

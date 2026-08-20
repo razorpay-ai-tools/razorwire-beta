@@ -43,21 +43,17 @@ class Settings(BaseSettings):
     llm_model: str = "glm-5p2"
 
     # --- slack ingestion ------------------------------------------------------
-    #: Restored here for the same reason as `work_dir` below: PR #5 added these and
-    #: `slack.py` reads them, but PR #4's config.py landed without them.
+    #: Bot token (``xoxb-``). Read-only: the integration calls conversations.replies,
+    #: conversations.info and users.info over GET and nothing else, so the scopes are
+    #: channels:history, groups:history, channels:read, users:read — no write scope.
+    #: The bot must also be invited to any channel it reads, or Slack returns
+    #: `not_in_channel`.
     #:
-    #: Bot token (``xoxb-``). Needs scopes: channels:history, groups:history,
-    #: channels:read, users:read. The bot must also be invited to any channel it
-    #: reads — Slack returns `not_in_channel` otherwise.
+    #: There is deliberately no channel allow-list. Which Slack channel a thread came
+    #: from no longer gates ingestion; the restriction that replaced it is on OUR side —
+    #: a Slack-sourced post is pinned to the Announcements channel. See
+    #: `ANNOUNCEMENTS_SLUG` in main.py.
     slack_bot_token: str = ""
-    #: Channels we are allowed to ingest from, comma-separated ids or names. Empty
-    #: means none: an allow-list that defaults to "everything" is not an allow-list.
-    slack_allowed_channels: str = ""
-
-    @property
-    def slack_allow_list(self) -> frozenset[str]:
-        raw = (self.slack_allowed_channels or "").split(",")
-        return frozenset(part.strip().lstrip("#") for part in raw if part.strip())
 
     # --- storage --------------------------------------------------------------
     #: Uploads land here when Supabase Storage is not configured.
@@ -82,6 +78,13 @@ class Settings(BaseSettings):
     render_height: int = 1920
     #: TTS backend: "auto" prefers Kokoro, falls back to macOS `say`, then silence.
     render_tts: str = "auto"
+    #: Kokoro voice, named <lang><gender>_<name>; the first letter also selects the
+    #: G2P the pipeline uses (see render/tts.py).
+    #:
+    #: af_heart is the only voice Kokoro grades A, and it shows — the Hindi packs
+    #: (hf_alpha/hf_beta, the nearest thing to Indian English) are graded C and read
+    #: English as a second language, which is audible. Warmer A-/B alternates worth
+    #: hearing: af_bella, af_sarah, bf_emma (British).
     kokoro_voice: str = "af_heart"
     #: Slightly under 1.0 reads as a person explaining, not a system announcing.
     kokoro_speed: float = 0.95

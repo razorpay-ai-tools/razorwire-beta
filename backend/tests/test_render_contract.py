@@ -72,6 +72,21 @@ def test_internal_only_fields_never_reach_the_renderer(wire: dict) -> None:
         assert ours not in blob, f"{ours} leaked into the render file"
 
 
+def test_audio_url_survives_into_the_stored_storyboard_but_not_the_render_file(
+    sb: internal.Storyboard,
+) -> None:
+    """Reel narration audio is pipeline-set: it must reach the stored/served internal
+    JSON the browser reel plays from, and must NOT leak into the renderer's file —
+    the MP4 carries its own spoken track."""
+    from app.pipeline import storyboard_to_json
+
+    sb.scenes[0].audio_url = "/media/job_x_scene0.m4a"
+    assert storyboard_to_json(sb)["scenes"][0]["audioUrl"] == "/media/job_x_scene0.m4a"
+
+    payload, _ = rc.emit(sb)
+    assert "audioUrl" not in json.dumps(payload)
+
+
 def test_subtitle_is_taken_from_the_title_scene_not_invented(
     sb: internal.Storyboard, wire: dict
 ) -> None:
@@ -119,8 +134,8 @@ def test_the_minimal_file_is_valid() -> None:
     assert rc.validate_render_storyboard(_minimal()).scenes[0].id == "s1"
 
 
-@pytest.mark.parametrize("count", [3, 7])
-def test_rule_1_scene_count_must_be_4_to_6(count: int) -> None:
+@pytest.mark.parametrize("count", [rc.MIN_SCENES - 1, rc.MAX_SCENES + 1])
+def test_rule_1_scene_count_is_bounded(count: int) -> None:
     base = _minimal()
     scene = base["scenes"][0]
     base["scenes"] = [{**scene, "id": f"s{i}"} for i in range(count)]

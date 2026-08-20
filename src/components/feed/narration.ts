@@ -6,17 +6,6 @@
  * `node src/components/feed/__narration-check.mts` rather than by watching a video.
  */
 
-/** Speaking rates offered in the UI. 1 is the synthesizer's own idea of normal. */
-export const NARRATION_RATES = [0.85, 1, 1.25, 1.5] as const;
-
-export type NarrationRate = (typeof NARRATION_RATES)[number];
-
-/** Next rate in the cycle, wrapping. An unknown rate falls back to the first. */
-export function nextRate(current: number): NarrationRate {
-  const at = (NARRATION_RATES as readonly number[]).indexOf(current);
-  return NARRATION_RATES[(at + 1) % NARRATION_RATES.length];
-}
-
 /**
  * What finishing the current caption means: another line of this scene, or the next
  * scene.

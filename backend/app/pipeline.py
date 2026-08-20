@@ -66,9 +66,11 @@ Rules that matter more than style:
    genuinely useful, not a system issuing a briefing. Problems are the setup for a fix, never
    doom. Keep it professional: light means easy to listen to, not jokey.
 
-4. BUDGET. {{min_scenes}} to {{max_scenes}} scenes, and all narration together must stay under 60
-   seconds spoken, which is roughly 150 words in total. Open with why an engineer should care;
-   close with an outro.
+4. BUDGET. {{min_scenes}} to {{max_scenes}} scenes, and all narration together runs 60 to 90
+   seconds spoken — roughly 150 to 220 words in total. Use the room to actually cover the
+   document; never pad a thin one to fill it. If the document genuinely cannot be covered in
+   90 seconds, cover its most load-bearing storyline completely rather than everything
+   shallowly. Open with why an engineer should care; close with an outro.
 
 4b. ARCHITECTURE IS ALWAYS A DIAGRAM. Never describe a system in prose or bullets when the
    document gives you components and flow. When the document has both a current and a proposed
@@ -181,12 +183,16 @@ def run_script_stage(
     doc_title: str | None = None,
     doc_url: str | None = None,
     style: str = "reel",
+    part: dict | None = None,
 ) -> Storyboard:
     """Generate and validate a storyboard.
 
     :param style: ``"reel"`` for the browser storyboard, ``"video"`` for one destined for
         an MP4 with a spoken track. Same contract either way; different brief, because a
         video is watched once with sound and a reel is scrubbed and read.
+    :param part: when the plan stage split the source, ``{"title", "focus", "index",
+        "total"}`` for the part this storyboard covers. The brief is narrowed to that
+        focus and the feed title gains a "— Part i/n" suffix. None means the whole source.
     :raises RuntimeError: if no API key is configured
     :raises StoryboardInvalid: if the model cannot produce a valid storyboard in
         ``MAX_ATTEMPTS`` attempts; carries the final round of errors
@@ -205,9 +211,14 @@ def run_script_stage(
         "description": "Emit the finished storyboard.",
         "input_schema": tool_input_schema(),
     }
-    messages: list[dict] = [
-        {"role": "user", "content": _user_prompt(kind, text, doc_title, style=style)}
-    ]
+    prompt = _user_prompt(kind, text, doc_title, style=style)
+    if part and part.get("total", 1) > 1:
+        prompt += (
+            f"\n\nThis is part {part['index']} of {part['total']} in a series on this source. "
+            f"This part is \"{part['title']}\".\nIts focus: {part['focus']}\n"
+            "Cover ONLY this part's focus — the other parts cover the rest."
+        )
+    messages: list[dict] = [{"role": "user", "content": prompt}]
     last_errors: list[str] = ["model produced no tool call"]
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -258,7 +269,13 @@ def run_script_stage(
         }
 
         try:
-            return validate_storyboard(candidate, stage="script")
+            sb = validate_storyboard(candidate, stage="script")
+            if part and part.get("total", 1) > 1:
+                # 70 is StoryboardMeta.title's max_length; the suffix must not push a
+                # stored title past re-validation on the read paths.
+                suffix = f" — Part {part['index']}/{part['total']}"
+                sb.meta.title = f"{sb.meta.title[: 70 - len(suffix)].rstrip()}{suffix}"
+            return sb
         except StoryboardInvalid as invalid:
             last_errors = invalid.errors
             log.warning("storyboard invalid on attempt %d/%d: %s", attempt, MAX_ATTEMPTS, invalid.errors)
@@ -350,6 +367,127 @@ def _balanced_object(text: str, start: int) -> dict | None:
                     return None
                 return parsed if isinstance(parsed, dict) else None
     return None
+
+
+# ------------------------------------------------------------------- the plan stage
+
+_PLAN_TOOL = "plan_parts"
+
+_PLAN_SYSTEM = """You decide whether one internal engineering document becomes one explainer video or several.
+
+A video carries 60 to 90 seconds of narration. Most documents fit in one, and ONE part is the
+strongly preferred answer: split ONLY when a single 90-second video genuinely cannot cover the
+document's load-bearing content. Never more than 3 parts.
+
+When you do split, the parts must be logically segregated stories — for example "the problem and
+current architecture" / "the proposed flow end to end" / "migration and rollout" — never arbitrary
+halves of the text. Each part must stand alone as one coherent story a viewer can watch on its own.
+"""
+
+
+def _plan_input_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "parts": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 3,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Short video title for this part.",
+                        },
+                        "focus": {
+                            "type": "string",
+                            "description": (
+                                "2-3 sentences: what this part covers and why it is one "
+                                "coherent story."
+                            ),
+                        },
+                    },
+                    "required": ["title", "focus"],
+                },
+            }
+        },
+        "required": ["parts"],
+    }
+
+
+def validate_parts(candidate) -> list[dict[str, str]] | None:
+    """1-3 parts with non-empty titles, normalised — or None when the plan is unusable.
+
+    Pure on purpose: the fallback rule ("planning misbehaving never fails a job") is the
+    part worth testing, and it needs no client to exercise.
+    """
+    if not isinstance(candidate, dict):
+        return None
+    parts = candidate.get("parts")
+    if not isinstance(parts, list) or not 1 <= len(parts) <= 3:
+        return None
+    out: list[dict[str, str]] = []
+    for item in parts:
+        if not isinstance(item, dict):
+            return None
+        title = str(item.get("title") or "").strip()
+        if not title:
+            return None
+        out.append({"title": title, "focus": str(item.get("focus") or "").strip()})
+    return out
+
+
+def run_plan_stage(*, kind: str, text: str, doc_title: str | None = None) -> list[dict[str, str]]:
+    """One LLM call deciding whether the source is one video or 2-3 logically split parts.
+
+    Never raises: a missing key, a gateway error or an unusable plan all collapse to a
+    single part, so planning can only ever widen a job, not fail it. Same gateway and
+    text-reply fallback as :func:`run_script_stage`.
+    """
+    fallback = [{"title": doc_title or "", "focus": ""}]
+    if not settings.llm_api_key:
+        return fallback
+    try:
+        from anthropic import Anthropic
+
+        client = Anthropic(api_key=settings.llm_api_key, base_url=settings.llm_base_url or None)
+        response = client.messages.create(
+            model=settings.llm_model,
+            # reasoning models think before they answer; see run_script_stage
+            max_tokens=8192,
+            system=_PLAN_SYSTEM,
+            tools=[
+                {
+                    "name": _PLAN_TOOL,
+                    "description": "Emit the part plan.",
+                    "input_schema": _plan_input_schema(),
+                }
+            ],
+            tool_choice={"type": "tool", "name": _PLAN_TOOL},
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        (f"Document: {doc_title}\n\n" if doc_title else "")
+                        + "Plan the explainer video(s) for this source. Call the "
+                        f"{_PLAN_TOOL} tool with 1 part unless one 90-second video truly "
+                        "cannot carry the load-bearing content.\n\n"
+                        f"---\n{text[:_MAX_SOURCE_CHARS]}\n---"
+                    ),
+                }
+            ],
+        )
+        block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
+        candidate = dict(block.input) if block is not None else _json_from_text(response)
+        parts = validate_parts(candidate)
+        if parts is None:
+            log.warning("plan stage produced an unusable plan; falling back to a single part")
+            return fallback
+        return parts
+    except Exception:
+        log.warning("plan stage failed; falling back to a single part", exc_info=True)
+        return fallback
 
 
 def resolve_broll(sb: Storyboard, library: dict[str, str]) -> Storyboard:

@@ -155,6 +155,86 @@
   }
 }
 
+/*
+ * The site-open intro: logo, then the name, then it gets out of the way.
+ *
+ * CSS-only and server-rendered from the root layout, so it paints with the FIRST
+ * frame — before hydration — which is the moment it exists to cover. A client
+ * component with a timer would only appear after hydration, i.e. after the wait.
+ *
+ * No "already played" flag: the brief is every open, and remembering would mean a
+ * client boundary plus a hydration mismatch to suppress for nothing.
+ *
+ * `pointer-events: none` for the whole run, so the feed underneath is live the entire
+ * time. The intro is decoration, never a gate — nobody waits 1.8s to tap something.
+ *
+ * Ends on visibility:hidden with `forwards`, which is also where the global
+ * prefers-reduced-motion rule below lands when it crushes the duration to 0.01ms:
+ * readers who asked for less motion skip the intro, with no extra rule to maintain.
+ */
+.intro {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  background: var(--color-surface-0);
+  pointer-events: none;
+  animation: intro-veil 1.8s ease-in forwards;
+}
+
+.intro-mark {
+  border-radius: 1rem;
+  /* Glow derived from the brand token, not a copy of its hex — as with pulse-ring. */
+  box-shadow: 0 0 70px color-mix(in srgb, var(--color-brand-500) 40%, transparent);
+  animation: intro-mark 720ms cubic-bezier(0.2, 0.8, 0.25, 1) both;
+}
+
+.intro-word {
+  font-size: 1.9rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--color-ink);
+  animation: intro-word 620ms cubic-bezier(0.2, 0.8, 0.25, 1) 260ms both;
+}
+
+@keyframes intro-veil {
+  0%,
+  62% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@keyframes intro-mark {
+  from {
+    opacity: 0;
+    transform: scale(0.78);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Left-to-right reveal, so the name lands after the mark rather than with it. The
+   end inset is negative so the last letter's side-bearing is not shaved off. */
+@keyframes intro-word {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 -8% 0 0);
+  }
+}
+
 * {
   box-sizing: border-box;
 }

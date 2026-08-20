@@ -1,15 +1,16 @@
 'use client';
 
 /**
- * Generate an explainer from a document.
+ * Generate an explainer from a document, a Slack thread, or a bare topic.
  *
- * The source is **aidocs** — Razorpay's internal doc platform and the only ingestion
- * source this product has. The previous design pass offered "Notion, Confluence or
- * GitHub", none of which exist here; the aidocs integration is the differentiator.
+ * Two of the three are GROUNDED — an aidoc cites the section a claim came from, a Slack
+ * thread cites the message and the person who said it — and that citation is the whole
+ * trust feature. The previous design pass offered "Notion, Confluence or GitHub", none
+ * of which exist here; aidocs and Slack are what Razorpay actually writes in.
  *
- * A plain-text topic is the secondary path, deliberately smaller: it produces a
- * storyboard with no `cite` anywhere, which is exactly what the trust feature exists to
- * avoid. There is no "Target Audience" field — the API has no such parameter.
+ * A plain-text topic is the fallback, deliberately smaller: it produces a storyboard
+ * with no `cite` anywhere, which is exactly what the trust feature exists to avoid.
+ * There is no "Target Audience" field — the API has no such parameter.
  */
 
 import { useEffect, useState } from 'react';
@@ -19,9 +20,14 @@ import { sampleAidoc, sampleAidocTitle } from '@/lib/sample-doc';
 import { ChannelSelect } from '@/components/channels/ChannelSelect';
 import { Icon } from '@/components/ui';
 import { PipelineStepper } from './PipelineStepper';
+import { parseSlackChannel } from './slack-ref';
 
 /** The backend's floor for a TOPIC. The aidoc path needs no text at all — it fetches. */
 const MIN_INPUT = 10;
+
+/** Where a Slack-sourced explainer lands by default. Matches `ANNOUNCEMENTS_SLUG` in
+ *  `backend/scripts/seed.py`, which is where the channel itself comes from. */
+const ANNOUNCEMENTS_SLUG = 'announcements';
 
 /** aidocs ids are `doc_` + alphanumerics, e.g. `doc_r523noskel555f7f`. Stopping at the
  *  first non-alphanumeric keeps a trailing URL slug out of the id. */
@@ -43,8 +49,10 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
   const [docRef, setDocRef] = useState('');
   const [docTitle, setDocTitle] = useState('');
   const [docText, setDocText] = useState('');
+  const [slackUrl, setSlackUrl] = useState('');
   const [topic, setTopic] = useState('');
-  // Chosen before generation, applied when the finished storyboard becomes a post.
+  // Chosen before generation and sent with the request: the pipeline is what creates the
+  // posts, and a multi-part job creates several that this panel never sees the ids of.
   const [channelId, setChannelId] = useState('');
   const [format, setFormat] = useState<GenerateFormat>('reel');
   // Whether the API box can render an MP4 at all. Null until asked. Offering video on a
@@ -76,14 +84,29 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
   const [error, setError] = useState<string | null>(null);
 
   const docId = parseDocId(docRef);
+  const slackChannel = parseSlackChannel(slackUrl);
 
   function buildRequest(): GenerateRequest | string {
+    const destination = channelId ? { channelId } : {};
+
     if (kind === 'topic') {
       const input = topic.trim();
       if (input.length < MIN_INPUT) {
         return 'Describe the topic in a sentence or more — at least 10 characters.';
       }
-      return { kind: 'topic', input, format };
+      return { kind: 'topic', input, format, ...destination };
+    }
+
+    if (kind === 'slack') {
+      /*
+       * The link is the whole requirement — no `input`. The server refuses a pasted-text
+       * fallback here on purpose (see main.py), because text copied out of Slack has lost
+       * the per-message authorship the citations point at.
+       */
+      if (!slackChannel) {
+        return 'That is not a Slack message link. Use Slack’s “Copy link” on a message — it looks like https://razorpay.slack.com/archives/C0192KLMN/p1755601234567800.';
+      }
+      return { kind: 'slack', input: '', slackUrl: slackUrl.trim(), format, ...destination };
     }
 
     if (!docId) {
@@ -104,6 +127,7 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
       input,
       docId,
       format,
+      ...destination,
       ...(trimmedTitle ? { docTitle: trimmedTitle } : {}),
       ...(trimmedRef.startsWith('http') ? { docUrl: trimmedRef } : {}),
     };
@@ -150,13 +174,7 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
   if (jobId) {
     return (
       <div className="space-y-3">
-        <PipelineStepper
-          key={jobId}
-          jobId={jobId}
-          onDone={handleDone}
-          onRetry={handleRetry}
-          {...(channelId ? { channelId } : {})}
-        />
+        <PipelineStepper key={jobId} jobId={jobId} onDone={handleDone} onRetry={handleRetry} />
         <button
           type="button"
           onClick={() => {
@@ -178,7 +196,7 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
           Generate
         </p>
         <h2 className="mt-1.5 text-lg font-semibold tracking-tight text-neutral-50">
-          Turn an aidoc into a 60-second explainer
+          Turn a spec or a thread into a 60-second explainer
         </h2>
         <p className="mt-1.5 text-xs leading-relaxed text-neutral-400">
           Every factual scene comes back with the section it came from, so anyone watching can
@@ -194,7 +212,14 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
             checked={kind === 'aidoc'}
             onSelect={setKind}
             label="aidocs document"
-            hint="Cited, checkable"
+            hint="Cited to the section"
+          />
+          <SourceOption
+            value="slack"
+            checked={kind === 'slack'}
+            onSelect={setKind}
+            label="Slack thread"
+            hint="Cited to the message"
           />
           <SourceOption
             value="topic"
@@ -282,6 +307,54 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
             </p>
           </div>
         </div>
+      ) : kind === 'slack' ? (
+        <div>
+          <label htmlFor="slack-url" className="block text-xs font-semibold text-neutral-300">
+            Slack message link
+          </label>
+          <input
+            id="slack-url"
+            name="slack-url"
+            type="url"
+            className="input mt-1.5 font-mono text-xs"
+            placeholder="https://razorpay.slack.com/archives/C0192KLMN/p1755601234567800"
+            value={slackUrl}
+            onChange={(event) => setSlackUrl(event.target.value)}
+            aria-describedby="slack-url-hint"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <p
+            id="slack-url-hint"
+            className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-neutral-500"
+          >
+            {slackChannel ? (
+              <>
+                <Icon name="check" label={null} className="mt-px size-3.5 shrink-0 text-success" />
+                <span>
+                  Reading <span className="font-mono text-neutral-300">{slackChannel}</span>. This
+                  channel has to be in the server’s{' '}
+                  <span className="font-mono">SLACK_ALLOWED_CHANNELS</span>, with the bot invited to
+                  it — ingesting a channel is opt-in.
+                </span>
+              </>
+            ) : (
+              <span>
+                Use Slack’s “Copy link” on any message in the thread. A link to a reply is fine —
+                the thread it belongs to is what gets read.
+              </span>
+            )}
+          </p>
+          {/* Said before generating, not discovered afterwards: these are real people's
+              words, and a debugging thread is mostly identifiers. */}
+          <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-neutral-500">
+            <Icon name="alert" label={null} className="mt-px size-3.5 shrink-0 text-warning" />
+            <span>
+              Every message is cited to whoever wrote it, so the people in the thread get named.
+              Payment ids, phone numbers and pasted tokens are redacted on the way in.
+            </span>
+          </p>
+        </div>
       ) : (
         <div>
           <label htmlFor="topic" className="block text-xs font-semibold text-neutral-300">
@@ -299,8 +372,8 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
           <p id="topic-hint" className="mt-1.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-neutral-500">
             <Icon name="alert" label={null} className="mt-px size-3.5 shrink-0 text-warning" />
             <span>
-              Without a document there is nothing to cite, so this reel carries no citation chips
-              and nobody can check it. Use an aidoc where one exists.
+              Without a source there is nothing to cite, so this reel carries no citation chips and
+              nobody can check it. Use an aidoc or a Slack thread where one exists.
             </span>
           </p>
         </div>
@@ -344,11 +417,16 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
         ) : null}
       </fieldset>
 
+      {/* A Slack thread IS the announcement, so that is where its explainer goes. Only a
+          default: the picker still offers every channel, and "No channel" sticks. The
+          other two sources have no obvious home — an aidoc explainer belongs in
+          Architecture or Payments Core as often as anywhere. */}
       <ChannelSelect
         id="generate-channel"
         value={channelId}
         onChange={setChannelId}
         disabled={submitting}
+        {...(kind === 'slack' ? { defaultSlug: ANNOUNCEMENTS_SLUG } : {})}
       />
 
       {error ? (
@@ -373,7 +451,14 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
   );
 }
 
-/** Radio, styled as a segment. Native radios already do arrow-key navigation. */
+/**
+ * Radio, styled as a segment. Native radios already do arrow-key navigation.
+ *
+ * All three are sized alike. aidocs used to render larger as the primary source, but a
+ * third option makes that impossible arithmetic: two `sm:max-w-52` siblings claim 416px
+ * of the 472px this sheet has, which left the emphasised one too narrow for its own
+ * label. Which source is preferable is carried by the hint text instead.
+ */
 function SourceOption({
   value,
   checked,
@@ -387,14 +472,13 @@ function SourceOption({
   label: string;
   hint: string;
 }) {
-  const primary = value === 'aidoc';
   return (
     <label
       className={`flex flex-1 cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition ${
         checked
           ? 'border-brand-500 bg-brand-500/10'
           : 'border-neutral-800 bg-neutral-900/60 hover:border-neutral-700'
-      } ${primary ? '' : 'sm:max-w-52'}`}
+      }`}
     >
       <input
         type="radio"
@@ -405,12 +489,8 @@ function SourceOption({
         className="mt-0.5 size-4 shrink-0 accent-brand-500"
       />
       <span className="min-w-0">
-        <span
-          className={`block font-semibold ${primary ? 'text-sm text-neutral-50' : 'text-xs text-neutral-200'}`}
-        >
-          {label}
-        </span>
-        <span className="mt-0.5 block text-[11px] text-neutral-400">{hint}</span>
+        <span className="block text-xs font-semibold text-neutral-100">{label}</span>
+        <span className="mt-0.5 block text-[11px] leading-snug text-neutral-400">{hint}</span>
       </span>
     </label>
   );

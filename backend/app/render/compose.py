@@ -39,13 +39,12 @@ def _run(cmd: list[str], cwd: Path) -> None:
         raise RuntimeError(f"ffmpeg failed ({result.returncode}):\n{tail}")
 
 
-def _drift_filter(width: int, height: int, fps: int, frames: int) -> str:
-    """A single still with a barely-there drift, for scenes with no build-up and no
-    footage. Far gentler than the old Ken Burns: 1.04 max, not 1.12."""
+def _still_filter(width: int, height: int, fps: int) -> str:
+    """A single still with a short fade-in — no zoom of any kind. For scenes with no
+    build-up and no footage."""
     return (
-        f"[0:v]scale={width}:{height},"
-        f"zoompan=z='min(zoom+0.0002,1.04)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-        f"d={frames}:s={width}x{height}:fps={fps}[v];[1:a]apad[a]"
+        f"[0:v]scale={width}:{height},fps={fps},setsar=1,"
+        f"fade=t=in:st=0:d=0.4[v];[1:a]apad[a]"
     )
 
 
@@ -89,14 +88,13 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
 
     for index, segment in enumerate(segments):
         dur_s = max(0.8, segment.duration_ms / 1000)
-        frames = max(1, round(fps * dur_s))
         seg_name = f"seg{index}.mp4"
         steps = len(segment.pngs)
         if segment.clip is None and steps == 1:
             inputs = [
-                "-i", segment.pngs[0].name,
+                "-loop", "1", "-i", segment.pngs[0].name,
                 "-i", segment.wav.name,
-                "-filter_complex", _drift_filter(width, height, fps, frames),
+                "-filter_complex", _still_filter(width, height, fps),
             ]
         else:
             # The clip's own audio is never mapped; narration is the soundtrack.

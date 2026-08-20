@@ -20,23 +20,17 @@ import {
 } from 'react';
 import { CategoryChip, Icon } from '@/components/ui';
 import { compactCount, initialsOf, type Post } from '@/lib/api';
-import { nextRate } from './narration';
 import { primeSpeech, useSpeechVoiceCount } from './useNarration';
 
 interface MuteState {
   muted: boolean;
   toggle: () => void;
-  /** Narration speed. Lives here with mute because both are the same preference. */
-  rate: number;
-  cycleRate: () => void;
 }
 
 /** Default keeps a post renderable outside the feed; `FeedScreen` supplies the real one. */
 const MuteContext = createContext<MuteState>({
   muted: true,
   toggle: () => {},
-  rate: 1,
-  cycleRate: () => {},
 });
 
 /** True when the keystroke belongs to whatever the user is typing in. */
@@ -55,8 +49,6 @@ export function MuteProvider({ children }: { children: ReactNode }) {
   // Muted by default: browsers block unmuted autoplay, so anything else would
   // silently fail to start on first paint.
   const [muted, setMuted] = useState(true);
-  const [rate, setRate] = useState<number>(1);
-  const cycleRate = useCallback(() => setRate((current) => nextRate(current)), []);
 
   // Priming runs here, in the click itself. Narration starts in an effect a tick
   // later, which is outside the gesture Safari and iOS require, so without this the
@@ -67,8 +59,8 @@ export function MuteProvider({ children }: { children: ReactNode }) {
     setMuted((value) => !value);
   }, []);
 
-  // m mutes, s changes speed. Both belong to the feed rather than to one post, so a
-  // preference survives scrolling to the next one.
+  // m mutes. It belongs to the feed rather than to one post, so the preference
+  // survives scrolling to the next one.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
@@ -77,9 +69,6 @@ export function MuteProvider({ children }: { children: ReactNode }) {
         // A keystroke is a gesture too, so prime from here as well.
         primeSpeech();
         setMuted((value) => !value);
-      } else if (event.key === 's' || event.key === 'S') {
-        event.preventDefault();
-        setRate((current) => nextRate(current));
       }
     }
 
@@ -87,7 +76,7 @@ export function MuteProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const value = useMemo(() => ({ muted, toggle, rate, cycleRate }), [muted, toggle, rate, cycleRate]);
+  const value = useMemo(() => ({ muted, toggle }), [muted, toggle]);
   return <MuteContext.Provider value={value}>{children}</MuteContext.Provider>;
 }
 
@@ -138,30 +127,6 @@ export function NarrationNotice() {
       <Icon name="alert" label={null} className="size-3.5 shrink-0" />
       No voices — captions only
     </span>
-  );
-}
-
-/**
- * Narration speed. Only shown once the narration can be heard — a speed control on a
- * muted reel is a control for nothing, and it would sit next to the unmute button
- * competing for the same glance.
- *
- * The rate also paces the reel, because scenes advance when the voice finishes a line.
- * So this is a speed control for the whole thing, not just for the voice.
- */
-export function NarrationRateButton({ className = '' }: { className?: string }) {
-  const { muted, rate, cycleRate } = useMute();
-  if (muted) return null;
-
-  return (
-    <button
-      type="button"
-      onClick={cycleRate}
-      className={`panel pointer-events-auto flex items-center gap-1 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-200 transition-colors hover:text-white ${className}`}
-    >
-      <span className="tabular-nums">{rate}×</span>
-      <span className="sr-only">narration speed, press S to change</span>
-    </button>
   );
 }
 

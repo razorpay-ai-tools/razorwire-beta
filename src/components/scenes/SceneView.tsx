@@ -22,16 +22,23 @@ export interface SceneViewProps {
   scene: Scene;
   /** true when this scene is the active one in the feed; drives entry animation */
   active: boolean;
+  /**
+   * How far through this scene's narration AUDIO the voice is, 0..1, or null when
+   * there is no audio to follow (muted, or the Web Speech fallback, which reports no
+   * position). The templates that build up piece by piece use it to reveal a piece as
+   * the voice reaches it; null means fall back to staggering on a timer.
+   */
+  progress?: number | null;
 }
 
-export function SceneView({ scene, active }: SceneViewProps): React.ReactElement {
+export function SceneView({ scene, active, progress = null }: SceneViewProps): React.ReactElement {
   switch (scene.type) {
     case 'title':
       return <TitleScene scene={scene} active={active} />;
     case 'bullets':
-      return <BulletsScene scene={scene} active={active} />;
+      return <BulletsScene scene={scene} active={active} progress={progress} />;
     case 'diagram':
-      return <DiagramScene scene={scene} active={active} />;
+      return <DiagramScene scene={scene} active={active} progress={progress} />;
     case 'compare':
       return <CompareScene scene={scene} active={active} />;
     case 'code':

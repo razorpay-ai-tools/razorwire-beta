@@ -11,7 +11,7 @@
  * only the following feed and the channel views filter on it.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, type Channel } from '@/lib/api';
 
 export function ChannelSelect({
@@ -19,11 +19,17 @@ export function ChannelSelect({
   onChange,
   disabled = false,
   id = 'channel',
+  defaultSlug,
 }: {
   value: string;
   onChange: (channelId: string) => void;
   disabled?: boolean;
   id?: string;
+  /**
+   * Preselect this channel once the list arrives, if nothing is chosen yet. A slug
+   * rather than an id, because the caller cannot know an id the server generated.
+   */
+  defaultSlug?: string;
 }) {
   const [channels, setChannels] = useState<Channel[]>([]);
 
@@ -41,6 +47,28 @@ export function ChannelSelect({
       live = false;
     };
   }, []);
+
+  /*
+   * Apply `defaultSlug`. Separate from the fetch because it also has to fire when the
+   * caller CHANGES the default — switching the generate form to a Slack source asks for
+   * Announcements after the list has already loaded.
+   *
+   * Guarded by a ref, not by `value` alone. "No channel" is a real choice and it is also
+   * the empty string, so a `!value` test cannot tell "not chosen yet" from "deliberately
+   * chose none" — and would silently put the default back every time someone cleared it.
+   * Recording the slug we applied means each default lands at most once and the reader's
+   * choice is final. Fires from an effect rather than during render because it lifts
+   * state to the parent.
+   */
+  const applied = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!defaultSlug || value || applied.current === defaultSlug) return;
+    const match = channels.find((channel) => channel.slug === defaultSlug);
+    if (!match) return;
+    applied.current = defaultSlug;
+    onChange(match.id);
+  }, [defaultSlug, channels, value, onChange]);
 
   return (
     <div>

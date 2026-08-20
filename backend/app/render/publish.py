@@ -62,12 +62,14 @@ def _create_post(
     media_url: str | None,
     storage_key: str | None,
     duration_ms: int | None,
+    channel_id: str | None = None,
 ) -> Post:
     post = Post(
         author_id=job.requester_id,
         title=sb.meta.title,
         tags=list(sb.meta.tags),
         kind="generated",
+        channel_id=channel_id,
         media_url=media_url,
         storage_key=storage_key,
         thumbnail_url=None,  # the <video> uses its first frame as the poster
@@ -84,20 +86,37 @@ def _create_post(
     return post
 
 
-def publish_render(session: Session, job: Job, sb: Storyboard, result: RenderResult) -> Post:
-    """Store the MP4 and create the generated Post that plays it."""
-    media_url, storage_key = store_mp4(result.mp4_path, job.id)
+def publish_render(
+    session: Session,
+    job: Job,
+    sb: Storyboard,
+    result: RenderResult,
+    *,
+    media_id: str | None = None,
+    channel_id: str | None = None,
+) -> Post:
+    """Store the MP4 and create the generated Post that plays it.
+
+    ``media_id`` distinguishes the parts of a multi-part job; storing every part under
+    ``job.id`` would leave one file that each part silently overwrites."""
+    media_url, storage_key = store_mp4(result.mp4_path, media_id or job.id)
     post = _create_post(
         session, job, sb,
         media_url=media_url, storage_key=storage_key, duration_ms=result.duration_ms,
+        channel_id=channel_id,
     )
     log.info("published render as post %s (%s)", post.id, media_url)
     return post
 
 
-def publish_storyboard_only(session: Session, job: Job, sb: Storyboard) -> Post:
+def publish_storyboard_only(
+    session: Session, job: Job, sb: Storyboard, *, channel_id: str | None = None
+) -> Post:
     """Fallback when rendering tooling is unavailable: publish the storyboard so the
     browser reel still plays. No MP4, so no ``media_url``."""
-    post = _create_post(session, job, sb, media_url=None, storage_key=None, duration_ms=None)
+    post = _create_post(
+        session, job, sb,
+        media_url=None, storage_key=None, duration_ms=None, channel_id=channel_id,
+    )
     log.info("published storyboard-only post %s (no mp4)", post.id)
     return post

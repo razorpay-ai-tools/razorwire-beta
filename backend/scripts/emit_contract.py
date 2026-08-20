@@ -67,6 +67,8 @@ type SceneBase = {{
   broll?: Broll;
   /** Set by the voice stage from measured audio length. Absent on the browser-reel path. */
   durationMs?: number;
+  /** Set at publish: pre-generated narration audio. Absent means Web Speech narrates. */
+  audioUrl?: string;
 }};
 
 export type TitleScene = SceneBase & {{ type: 'title'; heading: string; sub?: string }};

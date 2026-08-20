@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import Image from 'next/image';
 import Script from 'next/script';
 import './globals.css';
 
@@ -48,6 +49,26 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
         <Script id="theme-bootstrap" strategy="beforeInteractive">
           {`(()=>{try{var s=localStorage.getItem('razorwire-theme');document.documentElement.dataset.theme=(s==='light'||s==='dark')?s:(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark')}catch(e){document.documentElement.dataset.theme='dark'}})()`}
         </Script>
+
+        {/*
+         * The intro. Here rather than in page.tsx because the root layout is the only
+         * place it lands in the server's first HTML — see the recipe in globals.css.
+         * aria-hidden: it says nothing the <title> and the header do not already say.
+         * `preload`, not the Next 16-deprecated `priority` — this logo IS the LCP
+         * element for the first ~1.8s, so its <link> belongs in <head>.
+         */}
+        <div className="intro" aria-hidden>
+          <Image
+            src="/razorwire-logo.png"
+            alt=""
+            width={72}
+            height={72}
+            preload
+            className="intro-mark size-[72px]"
+          />
+          <span className="intro-word">RazorWire</span>
+        </div>
+
         {children}
       </body>
     </html>

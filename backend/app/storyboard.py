@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 MAX_MERMAID_NODES = 7
-MAX_SPOKEN_SECONDS = 75  # 60s target, 75s hard ceiling
+MAX_SPOKEN_SECONDS = 105  # 90s target, 105s hard ceiling
 _WORDS_PER_SECOND = 160 / 60
 
 # --- limits the renderer imposes -------------------------------------------------
@@ -41,7 +41,7 @@ _WORDS_PER_SECOND = 160 / 60
 # dropping content, so the model must be held to the tighter number up front.
 # `render_contract` imports them rather than restating them.
 MIN_SCENES = 4
-MAX_SCENES = 6
+MAX_SCENES = 8
 MAX_BULLETS = 4
 MAX_NARRATION_SENTENCES = 2
 
@@ -69,7 +69,7 @@ FACTUAL_SCENE_TYPES = frozenset({"bullets", "diagram", "compare", "code"})
 GROUNDED_SOURCE_KINDS = frozenset({"aidoc", "slack"})
 
 #: Fields the pipeline owns. Stripped from the model's view of the contract.
-PIPELINE_OWNED_FIELDS = ("durationMs", "clipId")
+PIPELINE_OWNED_FIELDS = ("durationMs", "clipId", "audioUrl")
 
 
 class BrollMood(str, Enum):
@@ -134,6 +134,13 @@ class _SceneBase(_Model):
         description=(
             "PIPELINE-SET. Derived from the measured length of this scene's narration audio. "
             "Never set this."
+        ),
+    )
+    audio_url: str | None = Field(
+        default=None,
+        description=(
+            "PIPELINE-SET. URL of this scene's pre-generated narration audio, played by "
+            "the browser reel instead of speech synthesis. Never set this."
         ),
     )
 
@@ -216,7 +223,7 @@ class Storyboard(_Model):
         min_length=MIN_SCENES,
         max_length=MAX_SCENES,
         description=(
-            f"{MIN_SCENES}-{MAX_SCENES} scenes, under 60 seconds spoken in total. "
+            f"{MIN_SCENES}-{MAX_SCENES} scenes, 60 to 90 seconds spoken in total. "
             "Byte-sized reel."
         ),
     )
@@ -352,6 +359,8 @@ def validate_storyboard(data: Any, stage: Literal["script", "render"] = "script"
         if stage == "script":
             if has_duration:
                 errors.append(f"{at}.durationMs is pipeline-set, the script stage must not emit it")
+            if scene.audio_url is not None:
+                errors.append(f"{at}.audioUrl is pipeline-set, the script stage must not emit it")
             if has_clip:
                 errors.append(f"{at}.broll.clipId is pipeline-set, the script stage must not emit it")
         else:

@@ -49,7 +49,7 @@ from .models import (
     init_db,
     utcnow,
 )
-from .pipeline import run_script_stage, storyboard_to_json
+from .pipeline import run_plan_stage, run_script_stage, storyboard_to_json
 from .render_contract import RenderContractInvalid, emit, write_bundle
 from .slack import SlackUnavailable, fetch_thread, parse_permalink
 from .storage import store_upload
@@ -209,6 +209,11 @@ class GenerateRequest(_Out):
     #: film rather than as slides. Default stays "reel" so nothing changes for callers
     #: that predate the choice.
     format: Literal["reel", "video"] = "reel"
+    #: Channel the finished post(s) land in, when the author picked one. Chosen up front
+    #: rather than applied by the caller afterwards, because the pipeline is what creates
+    #: the posts — and a multi-part job creates several, only one of which the caller
+    #: ever learns the id of.
+    channel_id: str | None = None
 
 
 class JobOut(_Out):
@@ -216,6 +221,9 @@ class JobOut(_Out):
     state: str
     progress: int
     error: str | None
+    #: what was asked for, "reel" or "video" — so a job that published the wrong thing
+    #: can be told apart from one that was never asked for the right thing
+    format: str
     storyboard: dict[str, Any] | None
     post_id: str | None
     created_at: datetime
@@ -277,6 +285,20 @@ def _absolute_media(url: str | None) -> str | None:
     return f"{settings.public_base_url.rstrip('/')}{url}"
 
 
+def _absolute_storyboard(sb: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Scene narration audio lives under /media like the MP4s, so it needs the same
+    qualifying as ``media_url`` on the way out. Stored relative, rewritten on read."""
+    if not sb or not any(s.get("audioUrl") for s in sb.get("scenes", [])):
+        return sb
+    return {
+        **sb,
+        "scenes": [
+            {**s, "audioUrl": _absolute_media(s["audioUrl"])} if s.get("audioUrl") else s
+            for s in sb["scenes"]
+        ],
+    }
+
+
 def _to_out(
     post: Post,
     author: User,
@@ -286,7 +308,11 @@ def _to_out(
     channel: Channel | None,
 ) -> PostOut:
     return PostOut(
-        **{**post.model_dump(), "media_url": _absolute_media(post.media_url)},
+        **{
+            **post.model_dump(),
+            "media_url": _absolute_media(post.media_url),
+            "storyboard": _absolute_storyboard(post.storyboard),
+        },
         author=UserOut.model_validate(author),
         channel=ChannelRef.model_validate(channel) if channel else None,
         likes=counts["likes"],
@@ -587,6 +613,49 @@ def get_post(post_id: str, session: SessionDep, user: UserDep) -> PostOut:
     return _hydrate(session, user, [post])[0]
 
 
+#: The one channel the system routes to on its own. A Slack thread IS an announcement,
+#: so its explainer is pinned here rather than left to whatever the client asked for.
+#: Matches `ANNOUNCEMENTS_SLUG` in scripts/seed.py.
+ANNOUNCEMENTS_SLUG = "announcements"
+
+
+def _is_slack_sourced(storyboard: dict[str, Any] | None) -> bool:
+    """Whether a storyboard came from a Slack thread.
+
+    Read off the storyboard's own `source`, not off a field the caller sets separately:
+    the source is what the citations point at, so it cannot disagree with the content.
+    """
+    if not storyboard:
+        return False
+    source = storyboard.get("source")
+    return isinstance(source, dict) and source.get("kind") == "slack"
+
+
+def _announcements_channel(session: Session, created_by: str) -> Channel:
+    """The Announcements channel, created on first use.
+
+    Get-or-create rather than a 422 on a missing channel: the restriction must hold on a
+    fresh database that was never seeded, and failing a finished render because a row is
+    absent would throw away real work.
+
+    Takes a user id rather than a ``User`` because the pipeline calls this too, and there
+    it holds ``job.requester_id`` without a row loaded.
+    """
+    channel = session.exec(select(Channel).where(Channel.slug == ANNOUNCEMENTS_SLUG)).first()
+    if channel is not None:
+        return channel
+    channel = Channel(
+        slug=ANNOUNCEMENTS_SLUG,
+        name="Announcements",
+        description="Ships, launches and changes — straight from the thread that announced them.",
+        created_by=created_by,
+    )
+    session.add(channel)
+    session.commit()
+    session.refresh(channel)
+    return channel
+
+
 @app.post("/posts", response_model=PostOut, status_code=status.HTTP_201_CREATED)
 def create_post(body: PostCreate, session: SessionDep, user: UserDep) -> PostOut:
     if body.kind == "generated" and body.storyboard is None:
@@ -596,7 +665,14 @@ def create_post(body: PostCreate, session: SessionDep, user: UserDep) -> PostOut
     if body.channel_id and session.get(Channel, body.channel_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "no such channel")
 
-    post = Post(author_id=user.id, **body.model_dump())
+    fields = body.model_dump()
+    if _is_slack_sourced(body.storyboard):
+        # Enforced here rather than trusted from the client, because a default the caller
+        # can override is not a restriction. Whatever channel was asked for, a thread
+        # becomes an announcement.
+        fields["channel_id"] = _announcements_channel(session, user.id).id
+
+    post = Post(author_id=user.id, **fields)
     session.add(post)
     session.commit()
     session.refresh(post)
@@ -700,13 +776,32 @@ def upload_media(user: UserDep, file: UploadFile = File(...)) -> UploadOut:
 # --------------------------------------------------------------------------- pipeline
 
 
-def _render_and_publish(session: Session, job: Job, storyboard, *, required: bool = False) -> None:
+def _scaled(progress: int, span: tuple[int, int]) -> int:
+    """Map the single-part 20-100 progress scale onto one part's slice of it."""
+    lo, hi = span
+    return lo + (progress - 20) * (hi - lo) // 80
+
+
+def _render_and_publish(
+    session: Session,
+    job: Job,
+    storyboard,
+    *,
+    required: bool = False,
+    media_id: str | None = None,
+    span: tuple[int, int] = (20, 100),
+    channel_id: str | None = None,
+) -> None:
     """Voice, render and publish. Advances voicing -> rendering -> published.
 
     :param required: the caller asked for a video specifically. Missing tooling is then an
         error, not something to paper over. Silently publishing a browser reel instead is
         what made "I asked for a video and got narration" look like a bug in the product
         rather than an ffmpeg that was never installed.
+    :param media_id: distinct id for this part's work dir and stored MP4 when a job
+        publishes several parts; without it part 2 would overwrite part 1's media.
+    :param span: this part's slice of the job's 20-100 progress range.
+    :param channel_id: channel the published post lands in, already resolved by the caller.
 
     With ``required`` false, missing tooling falls back to a storyboard-only post so a box
     without ffmpeg or Chromium still produces something playable. Rendering is imported
@@ -715,19 +810,19 @@ def _render_and_publish(session: Session, job: Job, storyboard, *, required: boo
     from .render import RenderUnavailable, render_from_voiced, voice_storyboard
     from .render.publish import publish_render, publish_storyboard_only
 
-    work_dir = Path(settings.work_dir) / job.id
+    work_dir = Path(settings.work_dir) / (media_id or job.id)
     try:
-        job.state, job.progress, job.updated_at = "voicing", 45, utcnow()
+        job.state, job.progress, job.updated_at = "voicing", _scaled(45, span), utcnow()
         session.add(job)
         session.commit()
         voiced = voice_storyboard(storyboard, work_dir)
 
-        job.state, job.progress, job.updated_at = "rendering", 80, utcnow()
+        job.state, job.progress, job.updated_at = "rendering", _scaled(80, span), utcnow()
         session.add(job)
         session.commit()
         result = render_from_voiced(storyboard, voiced, work_dir)
 
-        publish_render(session, job, storyboard, result)
+        publish_render(session, job, storyboard, result, media_id=media_id, channel_id=channel_id)
     except RenderUnavailable as exc:
         if required:
             raise RuntimeError(
@@ -736,11 +831,73 @@ def _render_and_publish(session: Session, job: Job, storyboard, *, required: boo
                 "instead — the reel narrates in the browser and needs neither."
             ) from exc
         log.warning("render tooling unavailable (%s); publishing storyboard-only", exc)
-        publish_storyboard_only(session, job, storyboard)
+        publish_storyboard_only(session, job, storyboard, channel_id=channel_id)
 
     # The storyboard now carries measured durations; keep the job's copy in step.
     job.storyboard = storyboard_to_json(storyboard)
-    job.state, job.progress = "published", 100
+    job.state, job.progress = "published", _scaled(100, span)
+
+
+def _reel_tts_is_silent(voiced) -> bool:
+    """True when every spoken track is all zero samples — no TTS engine produced a
+    voice, and a silent audio track is strictly worse than the Web Speech fallback."""
+    import wave
+
+    for spoken in voiced:
+        try:
+            with wave.open(str(spoken.wav_path), "rb") as handle:
+                if any(handle.readframes(handle.getnframes())):
+                    return False
+        except Exception:
+            continue
+    return True
+
+
+def _voice_reel(
+    session: Session,
+    job: Job,
+    storyboard,
+    *,
+    media_id: str | None = None,
+    span: tuple[int, int] = (20, 100),
+) -> None:
+    """Best-effort narration audio for a browser reel.
+
+    The same kokoro voice a rendered MP4 gets, encoded per scene to AAC and served
+    from ``/media``, so the reel plays a real voice instead of the Web Speech API.
+    Never fails the job: missing ffmpeg, no TTS voice, or a failed encode just leaves
+    ``audioUrl`` unset and the reel narrates in the browser exactly as before.
+    ``media_id`` keys this part's scene audio when a job publishes several parts.
+    """
+    import shutil
+    import subprocess
+
+    from .render import voice_storyboard
+
+    if shutil.which("ffmpeg") is None:
+        log.info("ffmpeg missing; reel %s keeps Web Speech narration", job.id)
+        return
+    try:
+        job.state, job.progress, job.updated_at = "voicing", _scaled(45, span), utcnow()
+        session.add(job)
+        session.commit()
+
+        voiced = voice_storyboard(storyboard, Path(settings.work_dir) / (media_id or job.id))
+        if _reel_tts_is_silent(voiced):
+            log.info("no TTS voice available; reel %s keeps Web Speech narration", job.id)
+            return
+        for scene, spoken in zip(storyboard.scenes, voiced):
+            name = f"{media_id or job.id}_scene{spoken.index}.m4a"
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", str(spoken.wav_path), "-c:a", "aac", "-b:a", "96k",
+                 str(MEDIA_DIR / name)],
+                check=True, capture_output=True, timeout=120,
+            )
+            scene.audio_url = f"/media/{name}"
+    except Exception as exc:
+        log.warning("reel voicing failed (%s); publishing without audio", exc)
+        for scene in storyboard.scenes:
+            scene.audio_url = None
 
 
 def _run_job(job_id: str, body: GenerateRequest) -> None:
@@ -751,6 +908,11 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
         job = session.get(Job, job_id)
         if job is None:
             return
+        # Part 1's storyboard, kept out of the loop so the tail below can restore it on
+        # every path. A multi-part job overwrites job.storyboard once per part while it
+        # runs, and the last part's is the wrong one to leave behind: job.post_id points
+        # at part 1, so the two would describe different videos.
+        first_storyboard: dict[str, Any] | None = None
         try:
             text, doc_title, doc_url = body.input, body.doc_title, body.doc_url
 
@@ -788,46 +950,98 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
             if not text.strip():
                 raise RuntimeError("nothing to generate from")
 
-            job.state, job.progress, job.updated_at = "scripting", 20, utcnow()
+            job.state, job.progress, job.updated_at = "scripting", 10, utcnow()
             session.add(job)
             session.commit()
 
-            storyboard = run_script_stage(
-                kind=body.kind,
-                text=text,
-                doc_id=body.doc_id,
-                doc_title=doc_title,
-                doc_url=doc_url,
-                style=body.format,
+            # One planning call decides whether this source is one video or up to three
+            # logically segregated parts, each published as its own post. Planning can
+            # only widen a job, never fail it: anything going wrong collapses to 1 part.
+            parts = run_plan_stage(kind=body.kind, text=text, doc_title=doc_title)
+            total = len(parts)
+            first_post_id: str | None = None
+
+            # Where the finished post(s) land. A Slack thread IS the announcement, so that
+            # is where its explainer goes whatever was asked for — the same rule
+            # `create_post` enforces, applied here because the pipeline is what creates
+            # these posts. Resolved once: every part of a multi-part job shares a channel.
+            channel_id = (
+                _announcements_channel(session, job.requester_id).id
+                if body.kind == "slack"
+                else body.channel_id
             )
 
-            # Stored in our INTERNAL shape: the feed's scene components dispatch on
-            # `scene.type` and read `cite`, so this column must never hold the render
-            # contract's `visual.kind` shape. See render_contract.py.
-            job.storyboard = storyboard_to_json(storyboard)
+            for index, part in enumerate(parts, 1):
+                # Each part gets an equal slice of the 20-100 progress range, and its
+                # own media id so part 2's MP4 or scene audio cannot overwrite part 1's.
+                span = (20 + (index - 1) * 80 // total, 20 + index * 80 // total)
+                media_id = job.id if total == 1 else f"{job.id}p{index}"
+                try:
+                    job.state, job.progress, job.updated_at = "scripting", span[0], utcnow()
+                    session.add(job)
+                    session.commit()
 
-            # The handoff. Steps 3 and 4 run on the same box, so the seam is a file on
-            # disk, not an HTTP call to our own API. Written even on the browser-reel
-            # path, so the voice and render stages have something to pick up whenever
-            # they are wired in, and so a bad projection surfaces now rather than later.
-            try:
-                write_bundle(job.id, storyboard)
-            except RenderContractInvalid as invalid:
-                # Not fatal: the browser reel plays from job.storyboard regardless. But
-                # it means this storyboard cannot become an MP4, and silence here would
-                # turn that into a mystery during rendering.
-                log.error("job %s cannot be rendered to MP4: %s", job_id, invalid.errors)
+                    storyboard = run_script_stage(
+                        kind=body.kind,
+                        text=text,
+                        doc_id=body.doc_id,
+                        doc_title=doc_title,
+                        doc_url=doc_url,
+                        style=body.format,
+                        part={**part, "index": index, "total": total} if total > 1 else None,
+                    )
 
-            if body.format == "video":
-                _render_and_publish(session, job, storyboard, required=True)
-            else:
-                # A reel is the storyboard itself, so voicing and rendering are skipped
-                # rather than attempted and discarded: they cost a minute of ffmpeg for a
-                # file the browser reel never plays.
-                from .render.publish import publish_storyboard_only
+                    # Stored in our INTERNAL shape: the feed's scene components dispatch on
+                    # `scene.type` and read `cite`, so this column must never hold the render
+                    # contract's `visual.kind` shape. See render_contract.py.
+                    job.storyboard = storyboard_to_json(storyboard)
 
-                publish_storyboard_only(session, job, storyboard)
-                job.state, job.progress = "published", 100
+                    # The handoff. Steps 3 and 4 run on the same box, so the seam is a file on
+                    # disk, not an HTTP call to our own API. Written even on the browser-reel
+                    # path, so the voice and render stages have something to pick up whenever
+                    # they are wired in, and so a bad projection surfaces now rather than later.
+                    try:
+                        write_bundle(media_id, storyboard)
+                    except RenderContractInvalid as invalid:
+                        # Not fatal: the browser reel plays from job.storyboard regardless. But
+                        # it means this storyboard cannot become an MP4, and silence here would
+                        # turn that into a mystery during rendering.
+                        log.error("job %s cannot be rendered to MP4: %s", job_id, invalid.errors)
+
+                    if body.format == "video":
+                        _render_and_publish(
+                            session, job, storyboard, required=True, media_id=media_id,
+                            span=span, channel_id=channel_id,
+                        )
+                    else:
+                        # A reel is the storyboard itself, so rendering is skipped. Narration is
+                        # still pre-generated when the box can voice it — the same kokoro track an
+                        # MP4 gets — so the browser plays real audio instead of the Web Speech
+                        # API. Best-effort: without it the reel publishes exactly as before.
+                        from .render.publish import publish_storyboard_only
+
+                        _voice_reel(session, job, storyboard, media_id=media_id, span=span)
+                        publish_storyboard_only(session, job, storyboard, channel_id=channel_id)
+                        # Voicing stamped durations and audio URLs; keep the job's copy in step.
+                        job.storyboard = storyboard_to_json(storyboard)
+                        job.state, job.progress = "published", _scaled(100, span)
+                except Exception as exc:
+                    if total == 1:
+                        raise
+                    # Parts already published stay published; the error names what failed.
+                    raise RuntimeError(
+                        f"part {index}/{total} ({part['title']!r}) failed"
+                        + (f" after {index - 1} part(s) were published" if first_post_id else "")
+                        + f": {exc}"
+                    ) from exc
+                first_post_id = first_post_id or job.post_id
+                # Captured after the part finished, so it is the voiced copy with measured
+                # durations rather than the one written before the audio existed.
+                first_storyboard = first_storyboard or job.storyboard
+
+            # Publishing set job.post_id per part; the web app navigates to it, and a
+            # multi-part job should land the viewer on part 1.
+            job.post_id = first_post_id
         except StoryboardInvalid as invalid:
             job.state, job.error = "failed", "; ".join(invalid.errors)
             log.warning("job %s failed validation: %s", job_id, invalid.errors)
@@ -835,6 +1049,11 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
             job.state, job.error = "failed", str(exc)
             log.exception("job %s failed", job_id)
 
+        # Last write wins on this column, and the loop wrote once per part. Put part 1's
+        # back, including when a later part failed — job.post_id is part 1's post, and the
+        # storyboard beside it has to be the same video.
+        if first_storyboard is not None:
+            job.storyboard = first_storyboard
         job.updated_at = utcnow()
         session.add(job)
         session.commit()
@@ -861,20 +1080,24 @@ def generate(
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY, "slack generation needs a slackUrl"
             )
-        # Validated here, not in the worker: a bad link or a channel we are not allowed
-        # to read should be a 422 the caller sees, not a job that fails a second later.
+        # Validated here, not in the worker: a bad link should be a 422 the caller sees,
+        # not a job that fails a second later. The parsed ref is otherwise unused —
+        # WHICH Slack channel a thread came from no longer gates anything. What is
+        # restricted is where the result lands on our side; see `create_post`.
         try:
-            ref = parse_permalink(body.slack_url)
+            parse_permalink(body.slack_url)
         except SlackUnavailable as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-        if ref.channel not in settings.slack_allow_list:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                f"{ref.channel} is not in SLACK_ALLOWED_CHANNELS. Ingesting a channel is "
-                "opt-in, because a thread's participants did not write it for the feed.",
-            )
 
-    job = Job(requester_id=user.id, source_kind=body.kind, source_input=body.input[:2000])
+    if body.channel_id and session.get(Channel, body.channel_id) is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "no such channel")
+
+    job = Job(
+        requester_id=user.id,
+        source_kind=body.kind,
+        source_input=body.input[:2000],
+        format=body.format,
+    )
     session.add(job)
     session.commit()
     session.refresh(job)

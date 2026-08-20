@@ -152,6 +152,10 @@ class Job(SQLModel, table=True):
 
     source_kind: str = "topic"
     source_input: str = ""
+    #: what the requester asked for: "reel" (browser storyboard) or "video" (rendered MP4).
+    #: Recorded rather than only held in the request body, so "I asked for a video and got a
+    #: reel" is answerable from the row instead of from a guess.
+    format: str = "reel"
     storyboard: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
     post_id: str | None = None
 
@@ -185,20 +189,34 @@ _database_url_value = _database_url(settings.database_url)
 _engine = create_engine(_database_url_value, echo=False, **_engine_kwargs(_database_url_value))
 
 
+#: Columns added after the first tables shipped. ``create_all`` only creates missing
+#: TABLES, never missing columns, so every one of these needs an explicit backfill on a
+#: database that predates it. ``default`` is written into existing rows; None leaves NULL.
+#: ponytail: tiny additive migrations. Replace with Alembic when schema history matters.
+_ADDED_COLUMNS: tuple[tuple[str, str, str, str | None], ...] = (
+    ("posts", "storage_key", "varchar", None),
+    ("posts", "thumbnail_url", "varchar", None),
+    # Jobs that predate the column were all browser reels, which is also the request
+    # default, so "reel" is the honest backfill rather than a placeholder.
+    ("jobs", "format", "varchar", "reel"),
+)
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(_engine)
-    _ensure_post_media_columns()
+    _ensure_added_columns()
 
 
-def _ensure_post_media_columns() -> None:
-    existing = {column["name"] for column in inspect(_engine).get_columns("posts")}
-    missing = [name for name in ("storage_key", "thumbnail_url") if name not in existing]
-    if not missing:
-        return
-    # ponytail: tiny additive migration. Replace with Alembic when schema history matters.
+def _ensure_added_columns() -> None:
+    inspector = inspect(_engine)
     with _engine.begin() as conn:
-        for name in missing:
-            conn.execute(text(f"alter table posts add column {name} varchar"))
+        for table, name, sql_type, default in _ADDED_COLUMNS:
+            if name in {column["name"] for column in inspector.get_columns(table)}:
+                continue
+            # NOT NULL DEFAULT in one statement: SQLite backfills existing rows with it,
+            # so the column is never NULL for a model field that is not Optional.
+            suffix = "" if default is None else f" not null default '{default}'"
+            conn.execute(text(f"alter table {table} add column {name} {sql_type}{suffix}"))
 
 
 def get_session() -> Session:

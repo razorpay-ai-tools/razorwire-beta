@@ -17,7 +17,6 @@ os.environ.setdefault("DEV_AUTH_EMAIL", "tester@razorpay.com")
 os.environ["DATABASE_URL"] = "sqlite://"
 
 from app import slack  # noqa: E402
-from app.config import settings  # noqa: E402
 from app.scrub import scrub  # noqa: E402
 from app.storyboard import (  # noqa: E402
     GROUNDED_SOURCE_KINDS,
@@ -249,19 +248,6 @@ def test_a_thin_thread_is_not_structured(messages: list[dict], why: str) -> None
     ref = slack.parse_permalink(PERMALINK)
     content = slack.parse_thread(ref, "some-channel", messages, NAMES)
     assert not content.is_structured, why
-
-
-# --------------------------------------------------------------------- allow-list
-
-
-def test_the_channel_allow_list_defaults_to_nothing() -> None:
-    """An allow-list that defaults to 'everything' is not an allow-list."""
-    assert settings.slack_allow_list == frozenset()
-
-
-def test_the_allow_list_parses_names_and_ids_with_or_without_hash(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "slack_allowed_channels", "C0192KLMN, #payments-platform ,")
-    assert settings.slack_allow_list == frozenset({"C0192KLMN", "payments-platform"})
 
 
 # ------------------------------------------------------------- the contract accepts it

@@ -1,11 +1,9 @@
 /**
  * Self-check for narration pacing. Run: `node src/components/feed/__narration-check.mts`
  *
- * Two things here can strand a reel and neither shows up in `tsc`:
- *   1. `advanceTarget` deciding "another line" on the last line, which would sit on the
- *      final caption of a scene forever now that the voice, not a timer, advances it.
- *   2. `nextRate` failing to wrap, or not recovering from a rate that is not in the
- *      list — the speed button would stop responding.
+ * What can strand a reel and does not show up in `tsc`: `advanceTarget` deciding
+ * "another line" on the last line, which would sit on the final caption of a scene
+ * forever now that the voice, not a timer, advances it.
  *
  * Also walks a real fixture scene end to end, because the interesting case is not one
  * decision but the sequence of them: every caption spoken exactly once, then the scene.
@@ -13,7 +11,7 @@
 
 import assert from 'node:assert/strict';
 import storyboard from '../../lib/fixtures/otm-rearch.storyboard.json' with { type: 'json' };
-import { NARRATION_RATES, advanceTarget, nextRate, pickVoice, speakableText } from './narration.ts';
+import { advanceTarget, pickVoice, speakableText } from './narration.ts';
 
 // 1. Line vs scene, at the edges.
 assert.equal(advanceTarget(0, 3), 'line', 'first of three captions should advance to a line');
@@ -22,18 +20,7 @@ assert.equal(advanceTarget(2, 3), 'scene', 'last caption must hand over to the n
 assert.equal(advanceTarget(0, 1), 'scene', 'a single caption is also the last one');
 assert.equal(advanceTarget(0, 0), 'scene', 'a silent scene must not wait for a voice');
 
-// 2. The rate cycle wraps, and recovers from a value that is not in the list.
-let rate: number = NARRATION_RATES[0];
-const seen = new Set<number>();
-for (let i = 0; i < NARRATION_RATES.length; i += 1) {
-  seen.add(rate);
-  rate = nextRate(rate);
-}
-assert.equal(seen.size, NARRATION_RATES.length, 'the cycle must visit every rate');
-assert.equal(rate, NARRATION_RATES[0], 'and wrap back to the start');
-assert.equal(nextRate(99), NARRATION_RATES[0], 'an unknown rate falls back to the first');
-
-// 3. A real scene's captions are each spoken once, then the reel moves on.
+// 2. A real scene's captions are each spoken once, then the reel moves on.
 //    Mirrors `captionsFor` in lib/api.ts, which cannot be imported here — it lives in a
 //    module that pulls in the browser client.
 const sentences = (narration: string) =>
@@ -78,5 +65,5 @@ assert.equal(pickVoice([voices[0], voices[3]])?.name, 'Albert', 'falls back to a
 assert.equal(pickVoice([voices[3]]), null, 'no English voice means let the browser decide');
 
 console.log(
-  `ok — narration sound: ${captions.length} captions walked, ${NARRATION_RATES.length} rates cycle, speech rewrites hold`,
+  `ok — narration sound: ${captions.length} captions walked, speech rewrites hold`,
 );
