@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import Image from 'next/image';
 import { ChannelsPanel } from '@/components/channels/ChannelsPanel';
 import { GeneratePanel } from '@/components/create/GeneratePanel';
 import { UploadClipForm } from '@/components/create/UploadClipForm';
@@ -98,6 +99,27 @@ export default function Home() {
       <FeedScreen key={feedKey} filter={filterFor(view)} emptyNote={emptyNoteFor(view)} />
 
       {/*
+       * The app header. md+ only: below md the feed is full-bleed and every strip of
+       * the frame already belongs to the post's own chrome (see the note on the bottom
+       * bar), so phones carry the brand in the nav pill instead. From md the feed is a
+       * centred card and the top-left corner is genuinely empty. Theme-aware surface —
+       * unlike the nav pill this floats over the page, not over video.
+       */}
+      <header className="pointer-events-none absolute left-5 top-5 z-50 hidden md:block">
+        <div className="pointer-events-auto flex items-center gap-2.5 rounded-full border border-hairline bg-surface-1/85 py-1.5 pl-2 pr-4 shadow-lg backdrop-blur-md">
+          <Image
+            src="/razorwire-logo.png"
+            alt=""
+            width={32}
+            height={32}
+            priority
+            className="size-8 rounded-[9px]"
+          />
+          <span className="text-sm font-semibold tracking-tight text-ink">RazorWire</span>
+        </div>
+      </header>
+
+      {/*
        * App chrome sits at the BOTTOM. At the top it collided with the post's own
        * chrome — progress rail, AI-reel badge and mute all live in that strip, and the
        * create bar was drawn straight over them. The active-filter pill goes here for
@@ -125,8 +147,19 @@ export default function Home() {
         ) : null}
 
         <div /* Deliberately a dark pill in both themes: it floats over the video stage, not
-             over the page surface. */
-          className="pointer-events-auto flex items-center gap-1 rounded-full border border-white/10 bg-[#131415]/80 p-1 backdrop-blur-md">
+             over the page surface. gap-0.5 rather than gap-1: with the brand logo added,
+             everything has to fit a 390px viewport minus px-4 — measured at 355px. */
+          className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-white/10 bg-[#131415]/80 p-1 backdrop-blur-md">
+          {/* The brand on phones, where the md+ header above is hidden. Measured: with
+              the logo the pill is 356px, exactly what a 390px viewport leaves it — so
+              below 390 (where even the logo-less pill never fit) the logo yields. */}
+          <Image
+            src="/razorwire-logo.png"
+            alt="RazorWire"
+            width={28}
+            height={28}
+            className="size-7 shrink-0 rounded-lg max-[389px]:hidden md:hidden"
+          />
           <ScopeTab
             label="For you"
             active={view.kind === 'all'}
@@ -196,7 +229,7 @@ function ScopeTab({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
+      className={`whitespace-nowrap rounded-full px-3 py-1.5 text-xs font-semibold transition-colors ${
         active ? 'bg-brand-500 text-white' : 'text-neutral-300 hover:text-white'
       }`}
     >
@@ -223,7 +256,7 @@ function IconTab({
       onClick={onClick}
       disabled={disabled}
       title={label}
-      className="rounded-full p-2 text-neutral-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40"
+      className="rounded-full p-1.5 text-neutral-300 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-40"
     >
       <Icon name={icon} label={label} className="size-4" />
     </button>

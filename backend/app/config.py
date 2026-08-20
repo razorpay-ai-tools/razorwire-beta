@@ -29,8 +29,18 @@ class Settings(BaseSettings):
     dev_auth_email: str = ""
 
     # --- pipeline -------------------------------------------------------------
+    #: Razorpay's LiteLLM gateway. It serves Anthropic's own `/v1/messages` shape and
+    #: translates it to whatever model is asked for, so the script stage keeps using the
+    #: `anthropic` SDK and no second client or dependency is needed. Point this at
+    #: nothing to talk to api.anthropic.com directly instead.
+    llm_base_url: str = "https://llm-gateway.razorpay.com"
+    #: Gateway key. Preferred over `anthropic_api_key`, which stays for anyone holding a
+    #: direct Anthropic key rather than a gateway one.
+    litellm_api_key: str = ""
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-5"
+    #: Whatever the gateway routes. `glm-5p2` today; a Claude model here would also work,
+    #: since the gateway speaks the same wire format either way.
+    llm_model: str = "glm-5p2"
 
     # --- aidocs ingestion -----------------------------------------------------
     aidocs_server: str = "https://aidocs.razorpay.com"
@@ -85,9 +95,20 @@ class Settings(BaseSettings):
     #: TTS backend: "auto" prefers Kokoro, falls back to macOS `say`, then silence.
     render_tts: str = "auto"
     kokoro_voice: str = "af_heart"
+    #: Slightly under 1.0 reads as a person explaining, not a system announcing.
+    kokoro_speed: float = 0.95
     #: Hard cap on a single scene's spoken length so one runaway scene cannot
     #: stretch the render; longer scenes are clamped.
     render_scene_max_ms: int = 15000
+    #: Background footage library: <mood>.mp4 per broll mood. Shared with the web
+    #: app's /broll/<clipId>.mp4 path, hence the default inside public/. A scene
+    #: whose mood has no clip here falls back to the CSS gradient.
+    broll_dir: str = "../public/broll"
+
+    @property
+    def llm_api_key(self) -> str:
+        """The gateway key if there is one, otherwise a direct Anthropic key."""
+        return self.litellm_api_key or self.anthropic_api_key
 
     @property
     def supabase_storage_enabled(self) -> bool:

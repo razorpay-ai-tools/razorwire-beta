@@ -1,9 +1,14 @@
 """The generation pipeline.
 
-Stage 1 (here): source text -> storyboard, via a Claude tool call whose
-``input_schema`` is generated from the same models that validate the result. When
-validation fails the errors are handed back to the model and it retries, so a
-malformed storyboard costs a retry instead of a failed job.
+Stage 1 (here): source text -> storyboard, via a model tool call whose ``input_schema``
+is generated from the same models that validate the result. When validation fails the
+errors are handed back to the model and it retries, so a malformed storyboard costs a
+retry instead of a failed job.
+
+The call goes through Razorpay's LiteLLM gateway, which serves Anthropic's
+``/v1/messages`` shape and translates it to whichever model is configured. That is why
+this module still imports the ``anthropic`` SDK while running ``glm-5p2``: the wire
+format is the contract, not the vendor. See ``Settings.llm_base_url``.
 
 Stages 2 and 3 (voice, visuals) are only needed for the MP4 export path. The
 browser reel narrates with the Web Speech API and derives scene timing from
@@ -52,6 +57,15 @@ Rules that matter more than style:
    becomes "merchant category code", "block_fund" becomes "block fund". On-screen `bullets` are
    read by the eye, narration by the ear — they should not be the same words.
 
+3b. PUNCTUATE FOR BREATH. The voice engine turns punctuation into pauses, so write the pauses
+   in: short sentences, a comma where a speaker would take half a beat, an em dash before the
+   payoff, a full stop instead of a run-on. Read your narration aloud in your head — if you
+   run out of air, so will the voice.
+
+3c. TONE IS LIGHT. Warm, upbeat and plainly glad to explain — a colleague sharing something
+   genuinely useful, not a system issuing a briefing. Problems are the setup for a fix, never
+   doom. Keep it professional: light means easy to listen to, not jokey.
+
 4. BUDGET. {{min_scenes}} to {{max_scenes}} scenes, and all narration together must stay under 60
    seconds spoken, which is roughly 150 words in total. Open with why an engineer should care;
    close with an outro.
@@ -64,6 +78,12 @@ Rules that matter more than style:
 4c. `compare` IS A LIGHT DEVICE. Its per-side items do not survive into the final video, so use
    it only when the two labels alone carry the point. Anything with real content belongs in
    `bullets`, and any before/after architecture belongs in two `diagram` scenes per 4b.
+
+4d. DIAGRAMS ARE WALKED, NOT SHOWN. The video reveals a diagram one component at a time,
+   in the order the Mermaid source declares them. Write the narration as that walk: name
+   each component once, in declaration order, saying what it does or hands over — so a
+   viewer who has never seen the system can follow the build-up. Same for bullets, which
+   appear one at a time in order.
 
 5. FOOTAGE. `broll.mood` picks background video from a fixed set: {{moods}}. It is decoration
    behind your content and carries no information. Use `abstract` behind dense scenes such as
@@ -92,7 +112,40 @@ def _system_prompt() -> str:
     )
 
 
-def _user_prompt(kind: str, text: str, doc_title: str | None) -> str:
+#: Written on top of the base brief when the storyboard is destined for an MP4 rather
+#: than the browser reel. The contract does not change — citations, the node cap and the
+#: sixty-second budget all still hold — but what makes a good sixty seconds does.
+#:
+#: The reel is read as much as watched: it pauses, it is scrubbed, its captions carry the
+#: text. A rendered video plays once, straight through, usually with sound. That wants a
+#: spine, a worked example and narration written to be heard rather than skimmed.
+_VIDEO_STYLE = """
+This storyboard becomes a RENDERED VIDEO with a spoken voice track, watched once from
+start to finish. Write it as a short informative film, not as slides:
+
+- ONE WORKED EXAMPLE, carried through. Pick a single concrete case the document supports —
+  one request, one mandate, one outage — and follow it across the scenes so the viewer
+  tracks a story instead of a list of facts. Use the document's real names and numbers.
+- ARC, NOT AGENDA. Open on the stake: what breaks, what it costs, who feels it. The very
+  first sentence is a hook under twelve words. Turn on the change. Close on what is
+  different now. Never open with "this document covers".
+- SPOKEN, NOT WRITTEN. Contractions, short sentences, one idea per sentence. The voice is
+  the whole soundtrack, so a sentence that would be skimmed on screen has to be heard. No
+  lists read aloud as lists.
+- LET THE BULLETS BE THE SLIDE. On-screen bullets are a few words each; the narration says
+  the sentence around them. Never read a bullet verbatim.
+- The example is not a licence to invent. If the document does not give you specifics,
+  narrate the general case and cite it — a made-up number in a spoken video is worse than
+  in text, because nobody pauses to check it.
+
+None of the above changes what you return. Emit the storyboard by calling the tool, or if
+you cannot call tools, reply with the storyboard as a single JSON object and nothing else.
+Do not write a screenplay, a shot list, or a treatment in prose: "film" describes how the
+narration should sound, not the format of your answer.
+"""
+
+
+def _user_prompt(kind: str, text: str, doc_title: str | None, *, style: str = "reel") -> str:
     if kind == "aidoc":
         head = f"Document: {doc_title or 'untitled'}\n\nTurn this document into a storyboard."
     elif kind == "slack":
@@ -116,7 +169,8 @@ def _user_prompt(kind: str, text: str, doc_title: str | None) -> str:
             "Topic (no source document, so omit `cite` and do not state specifics you cannot "
             "support):\n"
         )
-    return f"{head}\n\n---\n{text[:_MAX_SOURCE_CHARS]}\n---"
+    brief = f"{head}{_VIDEO_STYLE if style == 'video' else ''}"
+    return f"{brief}\n\n---\n{text[:_MAX_SOURCE_CHARS]}\n---"
 
 
 def run_script_stage(
@@ -126,31 +180,43 @@ def run_script_stage(
     doc_id: str | None = None,
     doc_title: str | None = None,
     doc_url: str | None = None,
+    style: str = "reel",
 ) -> Storyboard:
     """Generate and validate a storyboard.
 
+    :param style: ``"reel"`` for the browser storyboard, ``"video"`` for one destined for
+        an MP4 with a spoken track. Same contract either way; different brief, because a
+        video is watched once with sound and a reel is scrubbed and read.
     :raises RuntimeError: if no API key is configured
     :raises StoryboardInvalid: if the model cannot produce a valid storyboard in
         ``MAX_ATTEMPTS`` attempts; carries the final round of errors
     """
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+    if not settings.llm_api_key:
+        raise RuntimeError("LITELLM_API_KEY is not set (or ANTHROPIC_API_KEY for a direct key)")
 
     from anthropic import Anthropic
 
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    # The gateway serves Anthropic's `/v1/messages` shape for every model it routes, so
+    # the only difference from talking to Anthropic directly is where it points. An empty
+    # base URL means exactly that: talk to Anthropic directly.
+    client = Anthropic(api_key=settings.llm_api_key, base_url=settings.llm_base_url or None)
     tool = {
         "name": _TOOL_NAME,
         "description": "Emit the finished storyboard.",
         "input_schema": tool_input_schema(),
     }
-    messages: list[dict] = [{"role": "user", "content": _user_prompt(kind, text, doc_title)}]
+    messages: list[dict] = [
+        {"role": "user", "content": _user_prompt(kind, text, doc_title, style=style)}
+    ]
     last_errors: list[str] = ["model produced no tool call"]
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         response = client.messages.create(
-            model=settings.anthropic_model,
-            max_tokens=4096,
+            model=settings.llm_model,
+            # glm-5p2 is a reasoning model: its thinking block alone can eat 4096 tokens
+            # (the video brief reliably did), leaving stop_reason=max_tokens and an empty
+            # reply. The budget must cover thinking AND the storyboard.
+            max_tokens=16384,
             system=_system_prompt(),
             tools=[tool],
             tool_choice={"type": "tool", "name": _TOOL_NAME},
@@ -158,12 +224,31 @@ def run_script_stage(
         )
 
         block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
-        if block is None:
-            last_errors = ["model produced no tool call"]
-            messages.append({"role": "user", "content": f"Call the {_TOOL_NAME} tool."})
-            continue
 
-        candidate = dict(block.input)
+        if block is None:
+            # Forced tool choice is a request, not a guarantee, once the call goes through
+            # the gateway to a non-Anthropic model: glm-5p2 answers with the storyboard as
+            # JSON in a text block maybe half the time, which failed all three attempts and
+            # burned three paid calls to produce nothing. The JSON is right there, so take
+            # it — the validator is the gate either way, and a storyboard that passes is
+            # worth the same whichever envelope carried it.
+            candidate = _json_from_text(response)
+            if candidate is None:
+                last_errors = ["model produced no tool call and no JSON to fall back to"]
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Call the {_TOOL_NAME} tool. If you cannot call tools, reply with "
+                            "the storyboard as a single JSON object and nothing else."
+                        ),
+                    }
+                )
+                log.warning("attempt %d/%d: no tool call, no parsable JSON", attempt, MAX_ATTEMPTS)
+                continue
+            log.info("attempt %d: recovered the storyboard from a text reply", attempt)
+        else:
+            candidate = dict(block.input)
         # the pipeline owns these; the source fields are ours to set, not the model's
         candidate["source"] = {
             "kind": kind,
@@ -177,25 +262,94 @@ def run_script_stage(
         except StoryboardInvalid as invalid:
             last_errors = invalid.errors
             log.warning("storyboard invalid on attempt %d/%d: %s", attempt, MAX_ATTEMPTS, invalid.errors)
-            messages.append({"role": "assistant", "content": [block.model_dump()]})
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "is_error": True,
-                            "content": (
-                                "The storyboard was rejected. Fix every problem and call the tool "
-                                "again:\n" + "\n".join(f"- {e}" for e in last_errors)
-                            ),
-                        }
-                    ],
-                }
+            complaint = "The storyboard was rejected. Fix every problem and try again:\n" + "\n".join(
+                f"- {e}" for e in last_errors
             )
 
+            if block is None:
+                # A text-shaped answer has no tool_use_id to attach a tool_result to, and
+                # sending one anyway is a 400 from the gateway. Plain turns instead.
+                messages.append({"role": "assistant", "content": json.dumps(candidate)})
+                messages.append({"role": "user", "content": complaint})
+            else:
+                messages.append({"role": "assistant", "content": [block.model_dump()]})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "is_error": True,
+                                "content": complaint,
+                            }
+                        ],
+                    }
+                )
+
     raise StoryboardInvalid(last_errors)
+
+
+def _json_from_text(response) -> dict | None:
+    """Pull a storyboard object out of a text reply, or return None.
+
+    Models that cannot or will not call the tool answer with the JSON directly, sometimes
+    fenced in ```json, sometimes with a sentence in front of it. Scanning for the outermost
+    balanced braces handles all three without a regex that a nested object would defeat.
+    """
+    text = "".join(
+        getattr(block, "text", "") for block in response.content if getattr(block, "type", None) == "text"
+    ).strip()
+    if not text:
+        return None
+
+    # Every `{` is a candidate, not just the first. A reply that opens with "Here is the
+    # storyboard {as requested}:" balances a brace before the real object begins, and
+    # stopping at the first candidate threw the whole storyboard away.
+    #
+    # ponytail: O(n^2) worst case on brace-heavy prose. The text is a few KB and this runs
+    # once per attempt; revisit if a source ever produces megabytes of it.
+    fallback: dict | None = None
+    for start, char in enumerate(text):
+        if char != "{":
+            continue
+        candidate = _balanced_object(text, start)
+        if candidate is None:
+            continue
+        # A storyboard has these; a brace in prose does not. Keep looking rather than
+        # returning the first thing that happens to parse.
+        if "scenes" in candidate or "meta" in candidate:
+            return candidate
+        fallback = fallback or candidate
+    return fallback
+
+
+def _balanced_object(text: str, start: int) -> dict | None:
+    """Parse the object starting at ``start``, or None if it does not close or parse."""
+    depth, in_string, escaped = 0, False, False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    parsed = json.loads(text[start : index + 1])
+                except json.JSONDecodeError:
+                    return None
+                return parsed if isinstance(parsed, dict) else None
+    return None
 
 
 def resolve_broll(sb: Storyboard, library: dict[str, str]) -> Storyboard:

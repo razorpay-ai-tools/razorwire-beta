@@ -38,16 +38,31 @@ def voice_storyboard(sb: Storyboard, work_dir: Path) -> list[tts.Voiced]:
     return voiced
 
 
+def _scene_clip(scene) -> Path | None:
+    """The footage file for this scene's broll mood, if the library has one."""
+    mood = getattr(getattr(getattr(scene, "broll", None), "mood", None), "value", None)
+    if not mood:
+        return None
+    clip = Path(settings.broll_dir) / f"{mood}.mp4"
+    return clip if clip.is_file() else None
+
+
 def render_from_voiced(sb: Storyboard, voiced: list[tts.Voiced], work_dir: Path) -> RenderResult:
     """Capture each scene and compose the MP4. Assumes ``voice_storyboard`` has run."""
     width, height, fps = settings.render_width, settings.render_height, settings.render_fps
 
-    htmls = [html.scene_html(scene, width=width, height=height) for scene in sb.scenes]
-    pngs = capture.capture_scenes(htmls, work_dir, width=width, height=height)
+    clips = [_scene_clip(scene) for scene in sb.scenes]
+    htmls = [
+        html.scene_html(scene, width=width, height=height, over_footage=clip is not None)
+        for scene, clip in zip(sb.scenes, clips)
+    ]
+    frame_sets = capture.capture_scenes(
+        htmls, work_dir, width=width, height=height, keep_alpha=[c is not None for c in clips]
+    )
 
     segments = [
-        compose.Segment(png=png, wav=spoken.wav_path, duration_ms=spoken.duration_ms)
-        for spoken, png in zip(voiced, pngs)
+        compose.Segment(pngs=frames, wav=spoken.wav_path, duration_ms=spoken.duration_ms, clip=clip)
+        for spoken, frames, clip in zip(voiced, frame_sets, clips)
     ]
     mp4 = compose.compose(
         segments, work_dir / "video.mp4", fps=fps, width=width, height=height

@@ -21,26 +21,26 @@ import { SceneShell, TEXT_SHADOW } from './SceneShell';
 /**
  * Matches globals.css. mermaid inlines these into the SVG, so the tokens must be
  * literal hex — a `var(--color-brand-500)` here would not resolve inside the
- * generated markup. Values are Blade's azure.500 and blueGrayDark, so they must be
- * updated together with the @theme block.
+ * generated markup. Values are the logo-sampled brand-500 and Blade blueGrayDark,
+ * so they must be updated together with the @theme block.
  */
 const THEME_VARIABLES = {
   fontFamily: 'var(--font-mono)',
   fontSize: '14px',
   background: 'transparent',
   primaryColor: '#1f2123',
-  primaryBorderColor: '#1364f1',
+  primaryBorderColor: '#0364fa',
   primaryTextColor: '#eaebeb',
   secondaryColor: '#1f2123',
-  secondaryBorderColor: '#1364f1',
+  secondaryBorderColor: '#0364fa',
   secondaryTextColor: '#eaebeb',
   tertiaryColor: '#1f2123',
-  tertiaryBorderColor: '#1364f1',
+  tertiaryBorderColor: '#0364fa',
   tertiaryTextColor: '#eaebeb',
   mainBkg: '#1f2123',
-  nodeBorder: '#1364f1',
+  nodeBorder: '#0364fa',
   nodeTextColor: '#eaebeb',
-  lineColor: '#1364f1',
+  lineColor: '#0364fa',
   textColor: '#eaebeb',
   edgeLabelBackground: '#131415',
   clusterBkg: 'transparent',

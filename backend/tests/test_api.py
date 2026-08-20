@@ -140,7 +140,12 @@ def test_tool_schema_hides_pipeline_fields():
 
 
 def test_health_needs_no_auth(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    # The web app gates the video option on this, so it has to be a real answer about
+    # this machine rather than an optimistic constant.
+    assert isinstance(body["render"], bool)
+    assert body["render"] is (body["renderMissing"] == [])
 
 
 def test_me_creates_the_user_on_first_sight(client):
@@ -459,6 +464,60 @@ def test_prompt_text_is_not_truncated():
     assert len(doc.to_prompt_text()) > 8000
 
 
+# ------------------------------------------------------------------ the model call
+
+from app.config import settings  # noqa: E402
+from app.pipeline import run_script_stage  # noqa: E402
+
+
+def test_script_stage_calls_the_gateway_with_the_configured_model(monkeypatch):
+    """Where the call goes, and as what.
+
+    The gateway serves Anthropic's `/v1/messages` shape for every model it routes, which
+    is the only reason the `anthropic` SDK can drive `glm-5p2`. Nothing else asserts that,
+    so a base URL or model rename would otherwise be found by a failed demo.
+    """
+    seen: dict = {}
+
+    class _FakeMessages:
+        def create(self, **kwargs):
+            seen.update(kwargs)
+            raise RuntimeError("stop here — the wiring is what is under test")
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            seen["client"] = kwargs
+            self.messages = _FakeMessages()
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+    monkeypatch.setattr(settings, "litellm_api_key", "sk-test-gateway")
+
+    with pytest.raises(RuntimeError, match="stop here"):
+        run_script_stage(kind="topic", text="how mandates are debited")
+
+    assert seen["client"]["base_url"] == "https://llm-gateway.razorpay.com"
+    assert seen["client"]["api_key"] == "sk-test-gateway"
+    assert seen["model"] == "glm-5p2"
+    # The forced tool call is the contract; a model that free-texts instead is useless.
+    assert seen["tool_choice"] == {"type": "tool", "name": "emit_storyboard"}
+
+
+def test_script_stage_refuses_to_run_without_a_key(monkeypatch):
+    monkeypatch.setattr(settings, "litellm_api_key", "")
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    with pytest.raises(RuntimeError, match="LITELLM_API_KEY"):
+        run_script_stage(kind="topic", text="anything")
+
+
+def test_a_direct_anthropic_key_still_works(monkeypatch):
+    """Whoever holds a real Anthropic key should not be forced through the gateway."""
+    monkeypatch.setattr(settings, "litellm_api_key", "")
+    monkeypatch.setattr(settings, "anthropic_api_key", "sk-ant-direct")
+    assert settings.llm_api_key == "sk-ant-direct"
+
+
 # ------------------------------------------------------------------ media URLs
 
 def test_media_url_is_absolute(client):
@@ -482,3 +541,65 @@ def test_upload_returns_an_absolute_url(client):
     r = client.post("/uploads", files={"file": ("clip.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4")})
     assert r.status_code == 201, r.text
     assert r.json()["mediaUrl"].startswith("http://")
+
+
+# ------------------------------------------------------- the no-tool-call fallback
+
+from types import SimpleNamespace  # noqa: E402
+
+from app.pipeline import _json_from_text  # noqa: E402
+
+
+def _text_reply(text: str):
+    return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+
+
+def test_storyboard_is_recovered_from_a_text_reply():
+    """Forced tool choice is advisory once a non-Anthropic model is behind the gateway.
+
+    glm-5p2 answers with the storyboard as JSON in a text block a good fraction of the
+    time, which failed all three attempts and burned three paid calls for nothing. Each
+    case below is a shape a model actually produced.
+    """
+    # Prose that balances a brace before the real object begins.
+    recovered = _json_from_text(
+        _text_reply('Here is the storyboard {as requested}: {"meta":{"title":"t"},"scenes":[1]}')
+    )
+    assert recovered == {"meta": {"title": "t"}, "scenes": [1]}
+
+    # Fenced, with a brace inside a string inside the object.
+    assert _json_from_text(_text_reply('```json\n{"meta":{},"scenes":[{"x":"}"}]}\n```')) == {
+        "meta": {},
+        "scenes": [{"x": "}"}],
+    }
+
+    # Mermaid puts braces in strings; a regex would cut the object short here.
+    assert _json_from_text(_text_reply('{"scenes":[],"mermaid":"graph TD\\n A[x{y}] --> B"}'))["mermaid"]
+
+    # And nothing is invented when there is nothing to find.
+    assert _json_from_text(_text_reply("I cannot do that.")) is None
+    assert _json_from_text(_text_reply('{"meta":{"title"')) is None
+    assert _json_from_text(_text_reply("")) is None
+
+
+def test_text_only_reply_still_produces_a_storyboard(monkeypatch):
+    """End to end through `run_script_stage`: no tool call, valid JSON, real storyboard."""
+    payload = json.loads(FIXTURE.read_text())
+    payload.pop("source", None)  # the pipeline owns this
+
+    class _FakeMessages:
+        def create(self, **kwargs):
+            return _text_reply("Sure, here it is:\n" + json.dumps(payload))
+
+    class _FakeAnthropic:
+        def __init__(self, **kwargs):
+            self.messages = _FakeMessages()
+
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
+    monkeypatch.setattr(settings, "litellm_api_key", "sk-test")
+
+    sb = run_script_stage(kind="aidoc", text="anything", doc_id="doc_abc123")
+    assert sb.scenes, "a text-shaped reply must still yield scenes"
+    assert sb.source.doc_id == "doc_abc123", "the pipeline sets source, not the model"

@@ -57,8 +57,9 @@ WEB_ORIGIN=http://localhost:3000
 DEV_AUTH_EMAIL=you@razorpay.com
 GOOGLE_CLIENT_ID=
 ALLOWED_HD=razorpay.com
-ANTHROPIC_API_KEY=
-ANTHROPIC_MODEL=claude-sonnet-5
+LITELLM_API_KEY=
+LLM_BASE_URL=https://llm-gateway.razorpay.com
+LLM_MODEL=glm-5p2
 MEDIA_DIR=./.storage
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
@@ -139,7 +140,7 @@ One video, click to playing, and who pays for what:
 1  browser  → POST /generate {kind, docId|slackUrl}       → job id      ours, free
 2  browser  → GET /jobs/{id}, ~1×/sec                     → live states ours, free
 3a backend  → aidocs / Slack   fetch + normalise + scrub                internal, free
-3b backend  → Claude API       doc text + tool schema                   PAID, cents
+3b backend  → LiteLLM gateway  doc text + tool schema                   PAID, cents
    ─────────── storyboard.json written to <WORK_DIR>/<job_id>/ ───────────
 4  backend  → Kokoro (local)   narration → wav + measured duration      local, free
 5a backend  → Playwright       screenshot /render?post=…&scene=N        local, free

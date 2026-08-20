@@ -127,6 +127,7 @@ function GeneratedVideo({ post, active }: { post: Post; active: boolean }) {
         <video
           ref={ref}
           src={src}
+          poster={post.thumbnailUrl ?? undefined}
           muted={muted}
           loop
           playsInline
@@ -140,6 +141,17 @@ function GeneratedVideo({ post, active }: { post: Post; active: boolean }) {
       ) : (
         <div aria-hidden className="absolute inset-0" style={accentBackdrop(post.accent)} />
       )}
+
+      {/* Bands, as on ClipPost: the badge and PostMeta sit over arbitrary rendered
+          footage, and without these the metadata was raw white text on the frame. */}
+      <div
+        aria-hidden
+        className="absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-neutral-950/85 to-transparent"
+      />
+      <div
+        aria-hidden
+        className="absolute inset-x-0 bottom-0 z-10 h-2/5 bg-gradient-to-t from-neutral-950 via-neutral-950/70 to-transparent"
+      />
 
       <button
         type="button"

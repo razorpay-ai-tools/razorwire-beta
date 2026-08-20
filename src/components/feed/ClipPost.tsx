@@ -69,6 +69,7 @@ export function ClipPost({ post, active }: { post: Post; active: boolean }) {
         <video
           ref={ref}
           src={src}
+          poster={post.thumbnailUrl ?? undefined}
           muted={muted}
           loop
           playsInline

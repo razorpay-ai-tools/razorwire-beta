@@ -112,12 +112,30 @@ export interface Job {
   updatedAt: string;
 }
 
+/**
+ * What to produce.
+ *
+ * `reel` plays the storyboard in the browser and narrates with speech synthesis: seconds
+ * to publish, no tooling, scrubbable, captions carry the text. `video` renders an MP4 with
+ * a spoken track — minutes, needs ffmpeg and Chromium on the API box, and is scripted as a
+ * short film rather than as slides.
+ */
+export type GenerateFormat = 'reel' | 'video';
+
 export interface GenerateRequest {
   kind: 'aidoc' | 'topic';
   input: string;
   docId?: string;
   docTitle?: string;
   docUrl?: string;
+  format?: GenerateFormat;
+}
+
+/** `/health`, which also answers whether this API box can render an MP4 at all. */
+export interface Health {
+  status: string;
+  render: boolean;
+  renderMissing: string[];
 }
 
 export interface CreatePostRequest {
@@ -243,6 +261,8 @@ const pythonApi = {
     form.append('file', file);
     return request<{ mediaUrl: string; storageKey: string }>('/uploads', { method: 'POST', body: form });
   },
+
+  health: () => request<Health>('/health'),
 
   generate: (body: GenerateRequest) =>
     request<Job>('/generate', { method: 'POST', body: JSON.stringify(body) }),
@@ -713,6 +733,20 @@ const aisitesApi: ApiClient = {
   job(id) {
     requireExternalBackend('job polling');
     return pythonApi.job(id);
+  },
+
+  /**
+   * In aisites mode there is no API box of ours at all until one is configured, so the
+   * honest answer about MP4 rendering is "no" rather than an unanswered promise. With an
+   * external backend configured, ask it — the tooling lives there, not in this browser.
+   */
+  health() {
+    if (EXTERNAL_API_BASE) return pythonApi.health();
+    return Promise.resolve({
+      status: 'ok',
+      render: false,
+      renderMissing: ['a backend that can render — set NEXT_PUBLIC_API_URL'],
+    });
   },
 };
 

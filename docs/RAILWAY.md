@@ -47,12 +47,14 @@ SUPABASE_SERVICE_ROLE_KEY=...
 SUPABASE_STORAGE_BUCKET=razorwire-videos
 SUPABASE_STORAGE_PUBLIC=true
 MAX_UPLOAD_BYTES=52428800
-ANTHROPIC_MODEL=claude-sonnet-5
-ANTHROPIC_API_KEY=...
+LITELLM_API_KEY=...
+LLM_BASE_URL=https://llm-gateway.razorpay.com
+LLM_MODEL=glm-5p2
 ```
 
-`ANTHROPIC_API_KEY` is only needed for AI generation. Video upload only needs the
-Supabase values.
+`LITELLM_API_KEY` is only needed for AI generation. Video upload only needs the
+Supabase values. A direct `ANTHROPIC_API_KEY` still works as a fallback — clear
+`LLM_BASE_URL` if you use one.
 
 ## Redeploy backend from local checkout
 
