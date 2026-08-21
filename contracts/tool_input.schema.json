@@ -31,8 +31,8 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
-          "maxLength": 420,
+          "description": "What the voice says over this scene. Plain spoken prose, at most 3 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
+          "maxLength": 600,
           "minLength": 10,
           "title": "Narration",
           "type": "string"
@@ -99,8 +99,8 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
-          "maxLength": 420,
+          "description": "What the voice says over this scene. Plain spoken prose, at most 3 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
+          "maxLength": 600,
           "minLength": 10,
           "title": "Narration",
           "type": "string"
@@ -217,8 +217,8 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
-          "maxLength": 420,
+          "description": "What the voice says over this scene. Plain spoken prose, at most 3 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
+          "maxLength": 600,
           "minLength": 10,
           "title": "Narration",
           "type": "string"
@@ -280,8 +280,8 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
-          "maxLength": 420,
+          "description": "What the voice says over this scene. Plain spoken prose, at most 3 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
+          "maxLength": 600,
           "minLength": 10,
           "title": "Narration",
           "type": "string"
@@ -375,8 +375,8 @@
           "title": "Label"
         },
         "say": {
-          "description": "One or two spoken sentences describing THIS hop, grounded in the source. Plain prose, no markdown/emoji/URLs. Narrated exactly as this box and arrow are drawn, so keep it to the single hop.",
-          "maxLength": 300,
+          "description": "Up to 4 spoken sentences that teach THIS hop, grounded in the source: what happens on the hop AND why it matters \u2014 the problem it solves, the data it carries, the constraint behind it \u2014 drawn from the document, never invented. Plain prose, no markdown/emoji/URLs. Narrated exactly as this box and arrow are drawn, so cover the single hop in depth rather than racing ahead.",
+          "maxLength": 700,
           "minLength": 10,
           "title": "Say",
           "type": "string"
@@ -394,8 +394,8 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
-          "maxLength": 420,
+          "description": "What the voice says over this scene. Plain spoken prose, at most 3 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
+          "maxLength": 600,
           "minLength": 10,
           "title": "Narration",
           "type": "string"
@@ -546,8 +546,8 @@
       "additionalProperties": false,
       "properties": {
         "narration": {
-          "description": "What the voice says over this scene. Plain spoken prose, at most 2 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
-          "maxLength": 420,
+          "description": "What the voice says over this scene. Plain spoken prose, at most 3 sentences. No markdown, no emoji, no URLs (the voice reads them out literally), no stage directions. Expand abbreviations a voice would stumble on.",
+          "maxLength": 600,
           "minLength": 10,
           "title": "Narration",
           "type": "string"

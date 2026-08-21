@@ -103,15 +103,29 @@ def _synth_say(text: str, path: Path) -> bool:
     return path.exists() and path.stat().st_size > 44  # bigger than a bare WAV header
 
 
+_KOKORO_PIPELINES: dict[str, object] = {}
+
+
+def _kokoro_pipeline(lang_code: str):
+    """Build and cache one KPipeline per language. The 82M model loads once per
+    process, not once per hop — per-beat voicing calls the synthesizer many times."""
+    pipe = _KOKORO_PIPELINES.get(lang_code)
+    if pipe is None:
+        from kokoro import KPipeline  # type: ignore
+
+        pipe = KPipeline(lang_code=lang_code)
+        _KOKORO_PIPELINES[lang_code] = pipe
+    return pipe
+
+
 def _synth_kokoro(text: str, path: Path, voice: str) -> bool:
     """Kokoro-82M -> WAV. Returns False if the package/model is unavailable."""
     try:
-        from kokoro import KPipeline  # type: ignore
-    except Exception as exc:  # not installed, or torch missing
+        pipeline = _kokoro_pipeline("a")
+    except Exception as exc:  # not installed, or torch/model missing
         log.info("kokoro unavailable (%s); falling back", exc)
         return False
     try:
-        pipeline = KPipeline(lang_code="a")
         rate = 24000
         chunks = [audio for _, _, audio in pipeline(text, voice=voice)]
         if not chunks:

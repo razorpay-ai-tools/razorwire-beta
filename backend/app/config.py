@@ -77,8 +77,10 @@ class Settings(BaseSettings):
     render_tts: str = "auto"
     kokoro_voice: str = "af_heart"
     #: Hard cap on a single scene's spoken length so one runaway scene cannot
-    #: stretch the render; longer scenes are clamped.
-    render_scene_max_ms: int = 15000
+    #: stretch the render; longer scenes are clamped. Must sit above the longest
+    #: legitimate narration (the contract caps a scene's narration at ~25s and a
+    #: diagram hop's `say` at ~30s), or fuller narration gets truncated mid-sentence.
+    render_scene_max_ms: int = 45000
 
     @property
     def supabase_storage_enabled(self) -> bool:

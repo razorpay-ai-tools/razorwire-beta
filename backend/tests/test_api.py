@@ -137,15 +137,18 @@ def test_topic_source_does_not_need_cites():
 
 def test_rejects_runaway_narration():
     data = load()
-    # Max out every scene's spoken content to blow the total-seconds budget. A
-    # diagram's spoken length is the sum of its per-hop `say`s, not its one-line
-    # narration, so inflate those instead.
+    # Max out every scene's spoken content to blow the total-seconds budget, while
+    # staying inside the per-field caps (so it is the ceiling that fires, not a
+    # sentence-count or length error). A diagram's spoken length is the sum of its
+    # per-hop `say`s, not its one-line narration, so inflate those.
+    narr = " ".join([" ".join(["word"] * 28) + "."] * 3)   # 3 sentences, ~84 words
+    say = " ".join([" ".join(["word"] * 25) + "."] * 4)    # 4 sentences, ~100 words
     for scene in data["scenes"]:
         if scene["type"] == "diagram":
             for step in scene["steps"]:
-                step["say"] = " ".join(["word"] * 40) + "."
+                step["say"] = say
         else:
-            scene["narration"] = " ".join(["word"] * 70) + "."
+            scene["narration"] = narr
     with pytest.raises(StoryboardInvalid) as exc:
         validate_storyboard(data, "script")
     assert any("ceiling" in e for e in exc.value.errors)

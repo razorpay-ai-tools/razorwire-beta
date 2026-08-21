@@ -13,7 +13,7 @@ export const BROLL_MOODS = ['dataflow', 'servers', 'team', 'money', 'abstract', 
 export type BrollMood = 'dataflow' | 'servers' | 'team' | 'money' | 'abstract' | 'city';
 
 export const MAX_MERMAID_NODES = 7;
-export const MAX_SPOKEN_SECONDS = 180;
+export const MAX_SPOKEN_SECONDS = 240;
 
 /** Assigned by the visual resolver, never by the model. */
 export type Broll = { mood: BrollMood; clipId?: string };

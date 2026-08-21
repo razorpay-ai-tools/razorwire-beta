@@ -699,7 +699,15 @@ def _render_and_publish(session: Session, job: Job, storyboard) -> None:
 
         publish_render(session, job, storyboard, result)
     except RenderUnavailable as exc:
-        log.warning("render tooling unavailable (%s); publishing storyboard-only", exc)
+        # The post still publishes (as the browser reel), but say WHY there is no MP4,
+        # and how to get one, so a reel-instead-of-video is never a silent mystery.
+        log.warning(
+            "job %s: render tooling unavailable (%s) — publishing storyboard-only (browser reel). "
+            "Install backend/requirements-render.txt and run `playwright install chromium` to "
+            "produce the MP4.",
+            job.id,
+            exc,
+        )
         publish_storyboard_only(session, job, storyboard)
 
     # The storyboard now carries measured durations; keep the job's copy in step.

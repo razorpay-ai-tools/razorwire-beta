@@ -21,6 +21,7 @@ from .config import settings
 from .storyboard import (
     BrollMood,
     MAX_NARRATION_SENTENCES,
+    MAX_SAY_SENTENCES,
     Storyboard,
     StoryboardInvalid,
     sentence_count,
@@ -44,14 +45,17 @@ Rules that matter more than style:
    heading of a message for a Slack thread. If the source does not say something, do not put it
    in the storyboard. A viewer must be able to check any claim against the source.
 
-2. DIAGRAMS ARE A NARRATED WALKTHROUGH. For architecture, emit a `diagram` scene whose `steps`
-   are the flow — one hop per step: `src`, `dst`, an optional `label` (the action on that hop, e.g.
-   "create order API"), and `say` (one or two spoken sentences describing THAT hop). Use the
-   source's real component names. The diagram is BUILT from the steps and each box and arrow is
-   drawn on screen exactly as its `say` is spoken, so keep each `say` to its single hop and put the
-   steps in flow order. Do NOT write Mermaid yourself. At most {{max_nodes}} distinct components
-   across the steps. Never invent a hop the source does not describe. Also give a one-line
-   `narration` summarising the whole scene.
+2. DIAGRAMS ARE A NARRATED WALKTHROUGH — GO DEEP. For architecture, emit a `diagram` scene whose
+   `steps` are the flow — one hop per step: `src`, `dst`, an optional `label` (the action on that
+   hop, e.g. "create order API"), and `say`. The `say` is where the teaching happens: up to
+   {{max_say_sentences}} spoken sentences that explain THAT hop in full — not just "A calls B", but
+   what data moves, the problem it solves, and the constraint or reason behind it, all taken from
+   the document. Do not race through the architecture; a viewer should understand each hop before
+   the next box appears. Use the source's real component names. The diagram is BUILT from the steps
+   and each box and arrow is drawn on screen exactly as its `say` is spoken, so cover exactly one
+   hop per step, in flow order. Do NOT write Mermaid yourself. At most {{max_nodes}} distinct
+   components across the steps. Never invent a hop, or a reason, the source does not give. Also give
+   a one-line `narration` summarising the whole scene.
 
 3. NARRATION IS SPOKEN. Plain prose a voice reads aloud, at most {{max_sentences}} sentences per
    scene. No markdown, no bullet characters, no emoji, no stage directions, and never a URL —
@@ -59,9 +63,13 @@ Rules that matter more than style:
    becomes "merchant category code", "block_fund" becomes "block fund". On-screen `bullets` are
    read by the eye, narration by the ear — they should not be the same words.
 
-4. BUDGET. {{min_scenes}} to {{max_scenes}} scenes, and all narration together must stay under 60
-   seconds spoken, which is roughly 150 words in total. Open with why an engineer should care;
-   close with an outro.
+4. SHAPE AND LENGTH. {{min_scenes}} to {{max_scenes}} scenes. This is a thorough explainer, not a
+   teaser: aim for roughly ninety seconds to two and a half minutes of narration in total, spent
+   mostly on the architecture walkthrough. OPEN with the business "why" — the problem, and what the
+   reader needs to know before any diagram makes sense: what data or capability the services depend
+   on and where it lives today, stated from the document. Then walk the current architecture, then
+   the proposed one, then close with an outro. Depth is only worth it if it is grounded: where the
+   document does not explain a why, say less rather than inventing one.
 
 4b. ARCHITECTURE IS ALWAYS A DIAGRAM. Never describe a system in prose or bullets when the
    document gives you components and flow — use a `diagram` scene with `steps`. When the document
@@ -90,10 +98,10 @@ def _clamp_narrations(candidate: dict) -> None:
     A weaker or translated model often over-writes by a sentence; repairing it here is
     cheaper and more reliable than bouncing the whole storyboard back through a retry.
     """
-    def clamp(text: str) -> str:
+    def clamp(text: str, limit: int) -> str:
         text = text.strip()
-        if sentence_count(text) > MAX_NARRATION_SENTENCES:
-            return " ".join(_SENTENCE_SPLIT.split(text)[:MAX_NARRATION_SENTENCES]).strip()
+        if sentence_count(text) > limit:
+            return " ".join(_SENTENCE_SPLIT.split(text)[:limit]).strip()
         return text
 
     scenes = candidate.get("scenes")
@@ -103,18 +111,19 @@ def _clamp_narrations(candidate: dict) -> None:
         if not isinstance(scene, dict):
             continue
         if isinstance(scene.get("narration"), str):
-            scene["narration"] = clamp(scene["narration"])
+            scene["narration"] = clamp(scene["narration"], MAX_NARRATION_SENTENCES)
         steps = scene.get("steps")
         if isinstance(steps, list):
             for step in steps:
                 if isinstance(step, dict) and isinstance(step.get("say"), str):
-                    step["say"] = clamp(step["say"])
+                    step["say"] = clamp(step["say"], MAX_SAY_SENTENCES)
 
 
 def _system_prompt() -> str:
     from .storyboard import (
         MAX_MERMAID_NODES,
         MAX_NARRATION_SENTENCES,
+        MAX_SAY_SENTENCES,
         MAX_SCENES,
         MIN_SCENES,
     )
@@ -122,6 +131,7 @@ def _system_prompt() -> str:
     return _SYSTEM.format(
         max_nodes=MAX_MERMAID_NODES,
         max_sentences=MAX_NARRATION_SENTENCES,
+        max_say_sentences=MAX_SAY_SENTENCES,
         min_scenes=MIN_SCENES,
         max_scenes=MAX_SCENES,
         moods=", ".join(m.value for m in BrollMood),

@@ -1,0 +1,15 @@
+# Optional extras for LOCAL MP4 rendering (voice -> animated frames -> mux).
+#
+# The base requirements.txt stays lean so the API deploys without a ~2GB torch
+# build. When these are absent the pipeline falls back gracefully to the browser
+# reel (a storyboard-only post). Install these to produce the animated,
+# Kokoro-voiced MP4 that the feed then plays:
+#
+#   .venv/bin/pip install -r requirements-render.txt
+#   .venv/bin/playwright install chromium      # one-time headless browser download
+#
+# espeak-ng is bundled via espeakng-loader, so no system package is required.
+
+playwright>=1.48
+kokoro>=0.9.4
+soundfile>=0.12

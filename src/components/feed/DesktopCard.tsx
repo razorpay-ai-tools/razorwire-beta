@@ -9,10 +9,13 @@
  * do; a 1440px window does not, and reading a citation against the narration that used
  * it is much easier side by side than stacked over moving footage.
  *
+ * A generated post plays its rendered MP4 (`post.mediaUrl`) when the pipeline produced
+ * one — same `<video>` stage as a clip, so the desktop viewer sees the animated,
+ * voiced reel, with the citation panel still beside it. When there is no MP4 (render
+ * tooling absent, or still on the browser-reel path) it falls back to `SceneView`,
+ * which plays the storyboard as DOM. A raw uploaded `clip` always has a file.
+ *
  * What this deliberately does NOT do:
- *   - It does not render `<video src={post.mediaUrl}>` for a generated post. A generated
- *     post has no video: it is a storyboard, played by `SceneView` as DOM, which is the
- *     entire reason the mermaid diagram is trustworthy. Only `kind === 'clip'` has a file.
  *   - It does not render its own citation chip. `SceneShell` (scenes/SceneShell.tsx)
  *     already renders one for the current scene inside `SceneView`, so a chip here would
  *     be the same citation printed twice.
@@ -92,16 +95,21 @@ function isTyping(target: EventTarget | null): boolean {
 export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
   const scenes = useMemo(() => post.storyboard?.scenes ?? [], [post.storyboard]);
   const generated = post.kind === 'generated';
+  // A generated post that has been rendered to an MP4 plays the file (the browser reel
+  // is the fallback only when the render pipeline produced none). The Web Speech
+  // narration must stay off in that case, or it plays over the MP4's own audio track.
+  const hasVideo = generated && Boolean(post.mediaUrl);
   const { muted, rate } = useMute();
   // Unmuted, the voice paces the reel and the timer stands down. See useNarration.
-  const spoken = generated && !muted && active;
+  const spoken = generated && !hasVideo && !muted && active;
   // Called unconditionally: a clip simply has no scenes, so the reel is empty and idle.
   const reel = useReel(scenes, active, spoken);
   const { next, prev } = reel;
 
   // Left/right step scenes, as on mobile. Only the visible post listens.
   useEffect(() => {
-    if (!active || !generated) return;
+    // Arrow keys step scenes in the reel only; when the MP4 plays there is no reel.
+    if (!active || !generated || hasVideo) return;
 
     function onKeyDown(event: KeyboardEvent) {
       if (isTyping(event.target)) return;
@@ -116,7 +124,7 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [active, generated, next, prev]);
+  }, [active, generated, hasVideo, next, prev]);
 
   /**
    * There is no audio track on the generated path — narration is the Web Speech API, so
@@ -185,7 +193,9 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
           style={STAGE_STYLE}
           className="stage-dark relative aspect-[9/16] h-full shrink-0 overflow-hidden bg-neutral-950"
         >
-          {generated ? (
+          {hasVideo ? (
+            <ClipStage post={post} active={active} generated />
+          ) : generated ? (
             <SceneStage post={post} active={active} reel={reel} />
           ) : (
             <ClipStage post={post} active={active} />
@@ -206,7 +216,7 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
         <DesktopPanel
           post={post}
           active={active}
-          currentIndex={generated && active ? reel.index : undefined}
+          currentIndex={generated && active && !hasVideo ? reel.index : undefined}
         />
       </div>
     </article>
@@ -343,7 +353,15 @@ function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel:
  * a continuous position bar and a clock instead, exactly as on mobile. The metadata
  * and the conversation live in the right-hand panel.
  */
-function ClipStage({ post, active }: { post: Post; active: boolean }) {
+function ClipStage({
+  post,
+  active,
+  generated = false,
+}: {
+  post: Post;
+  active: boolean;
+  generated?: boolean;
+}) {
   const { muted } = useMute();
   const ref = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -433,8 +451,13 @@ function ClipStage({ post, active }: { post: Post; active: boolean }) {
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-4 pt-4">
         <span className="panel flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-300">
-          <Icon name="play" label={null} filled className="size-3 shrink-0 text-neutral-400" />
-          Clip
+          <Icon
+            name={generated ? 'sparkle' : 'play'}
+            label={null}
+            filled={!generated}
+            className={`size-3 shrink-0 ${generated ? 'text-brand-300' : 'text-neutral-400'}`}
+          />
+          {generated ? 'AI reel' : 'Clip'}
           <span aria-hidden className="text-neutral-600">
             &middot;
           </span>

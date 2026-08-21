@@ -131,12 +131,12 @@ def test_rule_1_scene_count_must_be_4_to_6(count: int) -> None:
 @pytest.mark.parametrize(
     "narration",
     [
-        "One sentence. Two sentences. Three is too many.",
+        "One sentence. Two sentences. Three sentences. Four is too many.",
         "Read it at https://aidocs.razorpay.com/app/d/doc_x.",
         "This has **markdown** in it.",
         "This one is cheerful 🎉.",
     ],
-    ids=["three-sentences", "url", "markdown", "emoji"],
+    ids=["four-sentences", "url", "markdown", "emoji"],
 )
 def test_rule_2_narration_must_be_plain_spoken_text(narration: str) -> None:
     base = _minimal()
@@ -186,8 +186,8 @@ def test_rule_6_duplicate_scene_ids_are_rejected() -> None:
 
 def test_validation_reports_every_problem_not_just_the_first() -> None:
     base = _minimal()
-    base["scenes"][0]["narration"] = "One. Two. Three."
-    base["scenes"][2]["narration"] = "Also. Far. Too. Long."
+    base["scenes"][0]["narration"] = "One. Two. Three. Four."
+    base["scenes"][2]["narration"] = "Also. Far. Too. Long. Indeed."
     with pytest.raises(rc.RenderContractInvalid) as raised:
         rc.validate_render_storyboard(base)
     assert len(raised.value.errors) >= 2

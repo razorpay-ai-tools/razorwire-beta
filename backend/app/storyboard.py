@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 MAX_MERMAID_NODES = 7
-MAX_SPOKEN_SECONDS = 180  # hop-by-hop diagram walkthroughs run longer; keep a generous ceiling
+MAX_SPOKEN_SECONDS = 240  # a full-fledged architecture walkthrough runs longer; generous ceiling
 _WORDS_PER_SECOND = 160 / 60
 
 # --- limits the renderer imposes -------------------------------------------------
@@ -43,7 +43,10 @@ _WORDS_PER_SECOND = 160 / 60
 MIN_SCENES = 4
 MAX_SCENES = 6
 MAX_BULLETS = 4
-MAX_NARRATION_SENTENCES = 2
+MAX_NARRATION_SENTENCES = 3
+#: A diagram hop's `say` carries the real teaching, so it gets more room than a
+#: scene's summary narration — enough to explain what happens AND why it matters.
+MAX_SAY_SENTENCES = 4
 
 #: Mermaid graph directions the renderer parses. `TD` is Mermaid's own synonym for
 #: `TB`, and it reads better in a 9:16 frame.
@@ -112,7 +115,7 @@ class ComparePane(_Model):
 class _SceneBase(_Model):
     narration: str = Field(
         min_length=10,
-        max_length=420,
+        max_length=600,
         description=(
             "What the voice says over this scene. Plain spoken prose, at most "
             f"{MAX_NARRATION_SENTENCES} sentences. No markdown, no emoji, no URLs (the voice "
@@ -169,11 +172,13 @@ class DiagramStep(_Model):
     )
     say: str = Field(
         min_length=10,
-        max_length=300,
+        max_length=700,
         description=(
-            "One or two spoken sentences describing THIS hop, grounded in the source. Plain prose, "
-            "no markdown/emoji/URLs. Narrated exactly as this box and arrow are drawn, so keep it to "
-            "the single hop."
+            f"Up to {MAX_SAY_SENTENCES} spoken sentences that teach THIS hop, grounded in the source: "
+            "what happens on the hop AND why it matters — the problem it solves, the data it carries, "
+            "the constraint behind it — drawn from the document, never invented. Plain prose, no "
+            "markdown/emoji/URLs. Narrated exactly as this box and arrow are drawn, so cover the single "
+            "hop in depth rather than racing ahead."
         ),
     )
 
@@ -278,21 +283,24 @@ def sentence_count(text: str) -> int:
     return max(count, 1)
 
 
-def check_narration(at: str, narration: str, errors: list[str]) -> None:
+def check_narration(
+    at: str, narration: str, errors: list[str], *, max_sentences: int = MAX_NARRATION_SENTENCES
+) -> None:
     """Append every narration problem found. Shared with ``render_contract``.
 
     These are not expressible in a schema: sentence count needs parsing, and the URL
     and emoji rules exist because the narration is spoken by a TTS engine that reads
-    "https colon slash slash" out loud rather than skipping it.
+    "https colon slash slash" out loud rather than skipping it. ``max_sentences`` lets a
+    diagram hop's ``say`` run longer than a scene's summary narration.
     """
     if not narration.strip():
         errors.append(f"{at}.narration is empty")
         return
 
     sentences = sentence_count(narration)
-    if sentences > MAX_NARRATION_SENTENCES:
+    if sentences > max_sentences:
         errors.append(
-            f"{at}.narration is {sentences} sentences, max {MAX_NARRATION_SENTENCES}. "
+            f"{at}.narration is {sentences} sentences, max {max_sentences}. "
             "Split the scene or cut a clause"
         )
     if _URL.search(narration):
@@ -438,7 +446,9 @@ def validate_storyboard(data: Any, stage: Literal["script", "render"] = "script"
                 if not scene.mermaid:
                     scene.mermaid = mermaid_from_steps(scene.steps)
                 for j, step in enumerate(scene.steps):
-                    check_narration(f"{at}.steps.{j}.say", step.say, errors)
+                    check_narration(
+                        f"{at}.steps.{j}.say", step.say, errors, max_sentences=MAX_SAY_SENTENCES
+                    )
                 check_mermaid(at, scene.mermaid, errors)
             elif scene.mermaid:
                 check_mermaid(at, scene.mermaid, errors)
