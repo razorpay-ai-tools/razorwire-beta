@@ -49,7 +49,7 @@ from .models import (
     init_db,
     utcnow,
 )
-from .pipeline import run_plan_stage, run_reduce_stage, run_script_stage, storyboard_to_json
+from .pipeline import run_plan_stage, run_script_stage, storyboard_to_json
 from .render_contract import RenderContractInvalid, emit, write_bundle
 from .slack import SlackUnavailable, fetch_thread, parse_permalink
 from .storage import store_upload
@@ -926,12 +926,6 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
             job.state, job.progress, job.updated_at = "scripting", 10, utcnow()
             session.add(job)
             session.commit()
-
-            # An over-long source is condensed first, keeping its headings verbatim so
-            # citations still resolve. Everything downstream then reads a document that
-            # fits, instead of a fragment truncated mid-table. No-op below the
-            # threshold, and it falls back to the original text on any failure.
-            text = run_reduce_stage(text=text, doc_title=doc_title)
 
             # One planning call decides whether this source is one video or up to three
             # logically segregated parts, each published as its own post. Planning can

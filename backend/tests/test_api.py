@@ -617,13 +617,7 @@ def test_text_only_reply_still_produces_a_storyboard(monkeypatch):
 
 # ------------------------------------------------------- the plan stage (multi-video)
 
-from app.pipeline import (  # noqa: E402
-    _MIN_CHARS_TO_SPLIT,
-    _REDUCE_ABOVE_CHARS,
-    run_plan_stage,
-    run_reduce_stage,
-    validate_parts,
-)
+from app.pipeline import _MIN_CHARS_TO_SPLIT, run_plan_stage, validate_parts  # noqa: E402
 
 
 def _fake_llm(monkeypatch, response):
@@ -641,41 +635,6 @@ def _fake_llm(monkeypatch, response):
 
     monkeypatch.setattr(anthropic, "Anthropic", _FakeAnthropic)
     monkeypatch.setattr(settings, "litellm_api_key", "sk-test")
-
-
-def test_a_source_that_fits_is_never_sent_to_the_reduce_stage():
-    """The reduce call is only worth its money and its minute on an over-long source."""
-
-    def fail_if_called():
-        raise AssertionError("run_reduce_stage must not call the model for a short source")
-
-    _fake_llm(pytest.MonkeyPatch(), fail_if_called)
-    short = "x" * 100
-    assert run_reduce_stage(text=short) == short
-
-
-def test_an_over_long_source_is_condensed(monkeypatch):
-    condensed = "## Section 4 — Proposed Architecture\n" + ("real prose about the flow. " * 40)
-    _fake_llm(monkeypatch, _text_reply(condensed))
-    out = run_reduce_stage(text="y" * (_REDUCE_ABOVE_CHARS + 1), doc_title="Deep Dive")
-    assert out == condensed.strip()  # the reply is stripped, hence not `condensed` itself
-    assert len(out) < _REDUCE_ABOVE_CHARS
-    assert "Section 4 — Proposed Architecture" in out  # headings survive, so cites resolve
-
-
-@pytest.mark.parametrize(
-    ("label", "response"),
-    [
-        ("the call blows up", lambda: (_ for _ in ()).throw(RuntimeError("gateway down"))),
-        ("it comes back empty", _text_reply("")),
-        ("it returns a stub", _text_reply("too short")),
-    ],
-)
-def test_reduce_failures_fall_back_to_the_original_source(monkeypatch, label, response):
-    """Condensing is an optimisation. Losing the document to it would be a bug."""
-    _fake_llm(monkeypatch, response)
-    original = "z" * (_REDUCE_ABOVE_CHARS + 1)
-    assert run_reduce_stage(text=original) == original, label
 
 
 def test_plan_validation_accepts_one_to_three_titled_parts():
