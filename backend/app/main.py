@@ -49,7 +49,7 @@ from .models import (
     init_db,
     utcnow,
 )
-from .pipeline import run_plan_stage, run_script_stage, storyboard_to_json
+from .pipeline import run_plan_stage, run_reduce_stage, run_script_stage, storyboard_to_json
 from .render_contract import RenderContractInvalid, emit, write_bundle
 from .slack import SlackUnavailable, fetch_thread, parse_permalink
 from .storage import store_upload
@@ -927,6 +927,12 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
             session.add(job)
             session.commit()
 
+            # An over-long source is condensed first, keeping its headings verbatim so
+            # citations still resolve. Everything downstream then reads a document that
+            # fits, instead of a fragment truncated mid-table. No-op below the
+            # threshold, and it falls back to the original text on any failure.
+            text = run_reduce_stage(text=text, doc_title=doc_title)
+
             # One planning call decides whether this source is one video or up to three
             # logically segregated parts, each published as its own post. Planning can
             # only widen a job, never fail it: anything going wrong collapses to 1 part.
@@ -1065,10 +1071,14 @@ def generate(
     if body.channel_id and session.get(Channel, body.channel_id) is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "no such channel")
 
+    # `input` is empty for an aidoc or a Slack thread — the source is the id or the
+    # permalink — so recording only `input` left every document-backed job with no
+    # trace of WHICH document it was for, and a failure could not be reproduced.
+    provenance = body.doc_id or body.slack_url or body.input
     job = Job(
         requester_id=user.id,
         source_kind=body.kind,
-        source_input=body.input[:2000],
+        source_input=(provenance or "")[:2000],
         format=body.format,
     )
     session.add(job)

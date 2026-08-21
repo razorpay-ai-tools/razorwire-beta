@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from concurrent import futures
 
 from .config import settings
 from .storyboard import (
@@ -37,7 +38,11 @@ MAX_ATTEMPTS = 3
 # ponytail: cap prompt size to keep the gateway request under its timeout; add a
 # document summarisation stage only if truncating source proves insufficient.
 _MAX_SOURCE_CHARS = 32_000
-_LLM_TIMEOUT_SECONDS = 180.0
+#: Per-request ceiling. 180s cut the script stage off mid-think at exactly 181s on a
+#: long source — our own timeout, not the gateway's. A reasoning model at 16384
+#: tokens legitimately needs longer than that, so the ceiling has to clear the work
+#: it was asked to do; `_STAGE_DEADLINE_SECONDS` is what stops it stacking.
+_LLM_TIMEOUT_SECONDS = 420.0
 #: Total wall clock allowed across ALL attempts of one stage.
 #:
 #: The SDK's `timeout` is per HTTP operation — effectively an inactivity timeout —
@@ -45,7 +50,20 @@ _LLM_TIMEOUT_SECONDS = 180.0
 #: stack. A 172k-character source spent 64 minutes here before the gateway gave up,
 #: with the job pinned at `scripting` the whole time. Checked between attempts: it
 #: cannot interrupt a call already in flight, but it stops us starting another.
-_STAGE_DEADLINE_SECONDS = 420.0
+_STAGE_DEADLINE_SECONDS = 600.0
+#: Above this, the source goes through `run_reduce_stage` first. Set just under
+#: `_MAX_SOURCE_CHARS`, because a source that would be truncated is exactly the one
+#: whose tail is being thrown away unread.
+_REDUCE_ABOVE_CHARS = 30_000
+#: One reduce call's slice of the source. A single call over the whole thing was the
+#: same trap as an oversized script call: handed 120k characters the model spent its
+#: entire budget thinking and returned no text at all. Slices are sized like the
+#: script stage's window, which is known to work, and they run concurrently.
+#: Kept above `_REDUCE_ABOVE_CHARS` so a source only just over the threshold is one
+#: slice rather than a tiny second one.
+_REDUCE_CHUNK_CHARS = 40_000
+#: Hard cap on how much of a runaway source is read at all, across every slice.
+_MAX_REDUCE_INPUT_CHARS = 400_000
 #: Below this, `run_plan_stage` answers "one part" without a round-trip. 220 words of
 #: narration is the whole 90-second budget, and a source needs several times that
 #: before a second part has anything of its own to say.
@@ -254,10 +272,14 @@ def run_script_stage(
             break
         response = client.messages.create(
             model=settings.llm_model,
-            # glm-5p2 is a reasoning model: its thinking block alone can eat 4096 tokens
-            # (the video brief reliably did), leaving stop_reason=max_tokens and an empty
-            # reply. The budget must cover thinking AND the storyboard.
-            max_tokens=8192,
+            # glm-5p2 is a reasoning model and the budget must cover thinking AND the
+            # storyboard. At 4096 the thinking block alone exhausted it; at 8192 the
+            # same failure came back on longer sources — stop_reason=max_tokens, an
+            # empty reply, and "no tool call and no JSON to fall back to". Lowering
+            # this to shorten a slow call trades a slow success for a certain failure;
+            # the way to shorten the call is to shrink the INPUT, which is what
+            # run_reduce_stage does.
+            max_tokens=16384,
             system=_system_prompt(),
             tools=[tool],
             tool_choice={"type": "tool", "name": _TOOL_NAME},
@@ -466,6 +488,124 @@ def validate_parts(candidate) -> list[dict[str, str]] | None:
             return None
         out.append({"title": title, "focus": str(item.get("focus") or "").strip()})
     return out
+
+
+_REDUCE_SYSTEM = """You condense an internal Razorpay engineering document so another model can
+script a short explainer from it.
+
+Keep VERBATIM every section heading you take a fact from. The scripting step cites those
+headings, and a citation that does not match the source is worse than no citation at all.
+
+Keep: the problem and who it hurts, the decision and its alternatives, the components and
+their real direction of flow, the document's own service and entity names, and any number
+the document actually states.
+
+Compress hardest on repetition. A table of measurements becomes its finding, not its rows.
+Drop changelog noise, restated context, and anything the document never concludes.
+
+Never invent, never generalise a number, and never rename a component. If the document is
+ambiguous, say so in one clause rather than resolving it.
+
+Return prose under 8000 characters, organised under those verbatim headings, and nothing else.
+"""
+
+
+def run_reduce_stage(*, text: str, doc_title: str | None = None) -> str:
+    """Condense an over-long source before the plan and script stages see it.
+
+    A source far past ``_MAX_SOURCE_CHARS`` was truncated to a dense fragment with no
+    narrative, which is the worst possible input for a reasoning model: it thought for
+    an hour on a 172k-character SR table dump and the gateway dropped the call. Cutting
+    the input is the only lever that shortens the call AND improves the script, because
+    both failures came from the same cause.
+
+    Never raises: any failure returns the original text, so a job degrades to the old
+    truncate-and-hope behaviour rather than dying here.
+    """
+    if len(text) <= _REDUCE_ABOVE_CHARS or not settings.llm_api_key:
+        return text
+
+    slices = _chunk_on_blank_lines(text[:_MAX_REDUCE_INPUT_CHARS], _REDUCE_CHUNK_CHARS)
+    try:
+        from anthropic import Anthropic
+
+        client = Anthropic(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url or None,
+            timeout=_LLM_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
+    except Exception as exc:
+        log.warning("reduce stage unavailable (%s); keeping the source as-is", exc)
+        return text
+
+    def condense(chunk: str) -> str:
+        response = client.messages.create(
+            model=settings.llm_model,
+            max_tokens=8192,
+            system=_REDUCE_SYSTEM,
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        f"Document: {doc_title or 'untitled'}\n\nCondense this part of it.\n\n"
+                        f"---\n{chunk}\n---"
+                    ),
+                }
+            ],
+        )
+        return "".join(
+            getattr(block, "text", "")
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+        ).strip()
+
+    # Slices are independent, and these are network calls, so they overlap. A slice
+    # that fails is dropped rather than failing the job: the rest of the document is
+    # still worth scripting from.
+    condensed: list[str] = []
+    if len(slices) == 1:
+        try:
+            condensed = [condense(slices[0])]
+        except Exception as exc:
+            log.warning("reduce stage failed (%s); keeping the source as-is", exc)
+            return text
+    else:
+        with futures.ThreadPoolExecutor(max_workers=min(4, len(slices))) as pool:
+            for index, task in enumerate(
+                [pool.submit(condense, chunk) for chunk in slices]
+            ):
+                try:
+                    condensed.append(task.result())
+                except Exception as exc:
+                    log.warning("reduce slice %d/%d failed: %s", index + 1, len(slices), exc)
+
+    reduced = "\n\n".join(part for part in condensed if part).strip()
+    # Too little came back to be a condensation of the document; it is a lost document.
+    if len(reduced) < 500:
+        log.warning("reduce stage returned %d chars; keeping the original", len(reduced))
+        return text
+    log.info(
+        "reduced source from %d to %d chars across %d slice(s)", len(text), len(reduced), len(slices)
+    )
+    return reduced
+
+
+def _chunk_on_blank_lines(text: str, size: int) -> list[str]:
+    """Split into ~``size`` pieces at paragraph breaks, so a heading stays with the
+    text beneath it and no slice starts mid-sentence."""
+    blocks = text.split("\n\n")
+    chunks: list[str] = []
+    current = ""
+    for block in blocks:
+        if current and len(current) + len(block) + 2 > size:
+            chunks.append(current)
+            current = block
+        else:
+            current = f"{current}\n\n{block}" if current else block
+    if current:
+        chunks.append(current)
+    return chunks or [text]
 
 
 def run_plan_stage(*, kind: str, text: str, doc_title: str | None = None) -> list[dict[str, str]]:
