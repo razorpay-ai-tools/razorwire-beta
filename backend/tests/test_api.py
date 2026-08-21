@@ -889,3 +889,24 @@ def test_failed_second_part_keeps_part_one_and_names_the_failure(client, monkeyp
         assert "part 2/2" in job.error and "The fix" in job.error
         assert job.post_id, "part 1's published post survives part 2's failure"
         assert client.get(f"/posts/{job.post_id}").status_code == 200
+
+
+def test_a_transient_model_failure_is_retried_not_fatal(monkeypatch):
+    """glm-5p2 on Fireworks returns a 400 'Floating point NaN in generation' — an
+    overflow in the weights, nothing to do with our request. The SDK will not retry a
+    400 and max_retries is 0, so one flake used to kill the whole job."""
+    calls = {"n": 0}
+    good = SimpleNamespace(
+        content=[SimpleNamespace(type="tool_use", input=load(), id="tu_1")]
+    )
+
+    def flake_then_succeed():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("Floating point NaN (not-a-number) is detected in generation")
+        return good
+
+    _fake_llm(monkeypatch, flake_then_succeed)
+    sb = run_script_stage(kind="topic", text="anything at all")
+    assert calls["n"] == 2, "the second attempt should have run"
+    assert sb.meta.title

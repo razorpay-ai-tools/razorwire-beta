@@ -256,20 +256,34 @@ def run_script_stage(
                 attempt,
             )
             break
-        response = client.messages.create(
-            model=settings.llm_model,
-            # glm-5p2 is a reasoning model and the budget must cover thinking AND the
-            # storyboard. At 4096 the thinking block alone exhausted it; at 8192 the
-            # same failure came back on longer sources — stop_reason=max_tokens, an
-            # empty reply, and "no tool call and no JSON to fall back to". Lowering
-            # this to shorten a slow call trades a slow success for a certain
-            # failure. The only safe way to shorten the call is a smaller INPUT.
-            max_tokens=16384,
-            system=_system_prompt(),
-            tools=[tool],
-            tool_choice={"type": "tool", "name": _TOOL_NAME},
-            messages=messages,
-        )
+        try:
+            response = client.messages.create(
+                model=settings.llm_model,
+                # glm-5p2 is a reasoning model and the budget must cover thinking AND
+                # the storyboard. At 4096 the thinking block alone exhausted it; at
+                # 8192 the same failure came back on longer sources —
+                # stop_reason=max_tokens, an empty reply, and "no tool call and no JSON
+                # to fall back to". Lowering this to shorten a slow call trades a slow
+                # success for a certain failure. The only safe way to shorten the call
+                # is a smaller INPUT.
+                max_tokens=16384,
+                system=_system_prompt(),
+                tools=[tool],
+                tool_choice={"type": "tool", "name": _TOOL_NAME},
+                messages=messages,
+            )
+        except Exception as exc:
+            # The model itself can fail in ways a retry fixes. glm-5p2 on Fireworks
+            # returns a 400 saying "Floating point NaN is detected in generation" —
+            # an overflow in the weights, unrelated to our request, and the gateway has
+            # no fallback group configured for it. The SDK will not retry a 400 and we
+            # set max_retries=0, so one flake killed the whole job. Spend an attempt
+            # instead; a genuine 401 or bad request simply fails all three and raises.
+            last_errors = [f"model call failed: {exc}"]
+            log.warning("attempt %d/%d: %s", attempt, MAX_ATTEMPTS, exc)
+            if attempt == MAX_ATTEMPTS:
+                raise
+            continue
 
         block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
 
