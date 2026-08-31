@@ -203,6 +203,10 @@ class GenerateRequest(_Out):
     #: Slack message permalink, for kind="slack". A link to any reply works — the
     #: adapter resolves it to the parent thread.
     slack_url: str | None = None
+    #: What to produce. "video" renders our long, Kokoro-voiced MP4 with animated
+    #: diagrams. "reel" runs main's short-reel path: a planner splits the source into
+    #: 1-3 parts, each published as an in-browser storyboard reel (no MP4).
+    format: Literal["reel", "video"] = "video"
 
 
 class JobOut(_Out):
@@ -210,6 +214,7 @@ class JobOut(_Out):
     state: str
     progress: int
     error: str | None
+    format: str
     storyboard: dict[str, Any] | None
     post_id: str | None
     created_at: datetime
@@ -715,6 +720,60 @@ def _render_and_publish(session: Session, job: Job, storyboard) -> None:
     job.state, job.progress = "published", 100
 
 
+def _run_reel_parts(
+    session: Session,
+    job: Job,
+    body: GenerateRequest,
+    *,
+    text: str,
+    doc_title: str | None,
+    doc_url: str | None,
+) -> None:
+    """main's reel path: split the source into 1-3 parts and publish each as an in-browser
+    storyboard reel (no MP4). Uses the isolated `app.reel` generator (main's contract), so
+    the single-long-video path is untouched. A multi-part job lands the viewer on part 1.
+    """
+    from .reel.pipeline import (
+        run_plan_stage,
+        run_script_stage as run_reel_script,
+        storyboard_to_json as reel_to_json,
+    )
+    from .render.publish import publish_storyboard_only
+
+    parts = run_plan_stage(kind=body.kind, text=text, doc_title=doc_title)
+    total = len(parts)
+    first_post_id: str | None = None
+    first_storyboard: dict[str, Any] | None = None
+
+    for index, part in enumerate(parts, 1):
+        lo, hi = 20 + (index - 1) * 80 // total, 20 + index * 80 // total
+        job.state, job.progress, job.updated_at = "scripting", lo, utcnow()
+        session.add(job)
+        session.commit()
+
+        storyboard = run_reel_script(
+            kind=body.kind,
+            text=text,
+            doc_id=body.doc_id,
+            doc_title=doc_title,
+            doc_url=doc_url,
+            style="reel",
+            part={**part, "index": index, "total": total} if total > 1 else None,
+        )
+        job.storyboard = reel_to_json(storyboard)
+        # A reel IS the storyboard — no render. This creates the generated post the browser
+        # reel plays and sets job.post_id (overwritten each part; restored to part 1 below).
+        publish_storyboard_only(session, job, storyboard)
+        first_post_id = first_post_id or job.post_id
+        first_storyboard = first_storyboard or job.storyboard
+        job.state, job.progress = "published", hi
+
+    job.post_id = first_post_id
+    if first_storyboard is not None:
+        job.storyboard = first_storyboard
+    job.state, job.progress = "published", 100
+
+
 def _run_job(job_id: str, body: GenerateRequest) -> None:
     """Background worker. Owns its own session; the request's is already closed."""
     from .models import _engine
@@ -764,32 +823,37 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
             session.add(job)
             session.commit()
 
-            storyboard = run_script_stage(
-                kind=body.kind,
-                text=text,
-                doc_id=body.doc_id,
-                doc_title=doc_title,
-                doc_url=doc_url,
-            )
+            if body.format == "reel":
+                # main's short-reel path: a planner splits the source into 1-3 parts,
+                # each published as its own in-browser storyboard reel (no MP4).
+                _run_reel_parts(session, job, body, text=text, doc_title=doc_title, doc_url=doc_url)
+            else:
+                storyboard = run_script_stage(
+                    kind=body.kind,
+                    text=text,
+                    doc_id=body.doc_id,
+                    doc_title=doc_title,
+                    doc_url=doc_url,
+                )
 
-            # Stored in our INTERNAL shape: the feed's scene components dispatch on
-            # `scene.type` and read `cite`, so this column must never hold the render
-            # contract's `visual.kind` shape. See render_contract.py.
-            job.storyboard = storyboard_to_json(storyboard)
+                # Stored in our INTERNAL shape: the feed's scene components dispatch on
+                # `scene.type` and read `cite`, so this column must never hold the render
+                # contract's `visual.kind` shape. See render_contract.py.
+                job.storyboard = storyboard_to_json(storyboard)
 
-            # The handoff. Steps 3 and 4 run on the same box, so the seam is a file on
-            # disk, not an HTTP call to our own API. Written even on the browser-reel
-            # path, so the voice and render stages have something to pick up whenever
-            # they are wired in, and so a bad projection surfaces now rather than later.
-            try:
-                write_bundle(job.id, storyboard)
-            except RenderContractInvalid as invalid:
-                # Not fatal: the browser reel plays from job.storyboard regardless. But
-                # it means this storyboard cannot become an MP4, and silence here would
-                # turn that into a mystery during rendering.
-                log.error("job %s cannot be rendered to MP4: %s", job_id, invalid.errors)
+                # The handoff. Steps 3 and 4 run on the same box, so the seam is a file on
+                # disk, not an HTTP call to our own API. Written even on the browser-reel
+                # path, so the voice and render stages have something to pick up whenever
+                # they are wired in, and so a bad projection surfaces now rather than later.
+                try:
+                    write_bundle(job.id, storyboard)
+                except RenderContractInvalid as invalid:
+                    # Not fatal: the browser reel plays from job.storyboard regardless. But
+                    # it means this storyboard cannot become an MP4, and silence here would
+                    # turn that into a mystery during rendering.
+                    log.error("job %s cannot be rendered to MP4: %s", job_id, invalid.errors)
 
-            _render_and_publish(session, job, storyboard)
+                _render_and_publish(session, job, storyboard)
         except StoryboardInvalid as invalid:
             job.state, job.error = "failed", "; ".join(invalid.errors)
             log.warning("job %s failed validation: %s", job_id, invalid.errors)
@@ -836,7 +900,12 @@ def generate(
                 "opt-in, because a thread's participants did not write it for the feed.",
             )
 
-    job = Job(requester_id=user.id, source_kind=body.kind, source_input=body.input[:2000])
+    job = Job(
+        requester_id=user.id,
+        source_kind=body.kind,
+        source_input=body.input[:2000],
+        format=body.format,
+    )
     session.add(job)
     session.commit()
     session.refresh(job)

@@ -46,6 +46,8 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
   const [topic, setTopic] = useState('');
   // Chosen before generation, applied when the finished storyboard becomes a post.
   const [channelId, setChannelId] = useState('');
+  // "video" = our one long rendered MP4; "reel" = main's short, browser-played reels.
+  const [format, setFormat] = useState<'video' | 'reel'>('video');
 
   const [request, setRequest] = useState<GenerateRequest | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
       if (input.length < MIN_INPUT) {
         return 'Describe the topic in a sentence or more — at least 10 characters.';
       }
-      return { kind: 'topic', input };
+      return { kind: 'topic', input, format };
     }
 
     if (!docId) {
@@ -80,6 +82,7 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
       kind: 'aidoc',
       input,
       docId,
+      format,
       ...(trimmedTitle ? { docTitle: trimmedTitle } : {}),
       ...(trimmedRef.startsWith('http') ? { docUrl: trimmedRef } : {}),
     };
@@ -288,6 +291,27 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
         onChange={setChannelId}
         disabled={submitting}
       />
+
+      <div>
+        <label htmlFor="format" className="block text-xs font-semibold text-neutral-300">
+          Format
+        </label>
+        <select
+          id="format"
+          className="input mt-1.5"
+          value={format}
+          onChange={(event) => setFormat(event.target.value as 'video' | 'reel')}
+          disabled={submitting}
+        >
+          <option value="video">Deep Dive — one long narrated video</option>
+          <option value="reel">Quick Reels — short, split by topic</option>
+        </select>
+        <p className="mt-1.5 text-[11px] text-neutral-500">
+          {format === 'video'
+            ? 'One long video with a spoken voiceover and diagrams that draw themselves as they are narrated. Takes a few minutes to render.'
+            : 'A planner splits the doc into up to three short reels, each played in the browser. Seconds to publish, no rendering.'}
+        </p>
+      </div>
 
       {error ? (
         <p

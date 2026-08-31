@@ -152,6 +152,10 @@ class Job(SQLModel, table=True):
 
     source_kind: str = "topic"
     source_input: str = ""
+    #: What the requester asked for: "video" (our long rendered MP4) or "reel" (main's
+    #: short browser storyboard, 1-3 parts). Recorded so a job's output can be told apart
+    #: from what was requested.
+    format: str = "video"
     storyboard: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
     post_id: str | None = None
 
@@ -188,6 +192,7 @@ _engine = create_engine(_database_url_value, echo=False, **_engine_kwargs(_datab
 def init_db() -> None:
     SQLModel.metadata.create_all(_engine)
     _ensure_post_media_columns()
+    _ensure_job_format_column()
 
 
 def _ensure_post_media_columns() -> None:
@@ -199,6 +204,16 @@ def _ensure_post_media_columns() -> None:
     with _engine.begin() as conn:
         for name in missing:
             conn.execute(text(f"alter table posts add column {name} varchar"))
+
+
+def _ensure_job_format_column() -> None:
+    """`jobs.format` was dropped on the single-video branch and is back for the reel/video
+    toggle. Backfill existing rows to 'video' — that branch only ever made videos."""
+    existing = {column["name"] for column in inspect(_engine).get_columns("jobs")}
+    if "format" in existing:
+        return
+    with _engine.begin() as conn:
+        conn.execute(text("alter table jobs add column format varchar not null default 'video'"))
 
 
 def get_session() -> Session:

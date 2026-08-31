@@ -118,6 +118,9 @@ export interface GenerateRequest {
   docId?: string;
   docTitle?: string;
   docUrl?: string;
+  /** "video" = one long rendered MP4 (our pipeline); "reel" = 1-3 short in-browser
+   *  storyboard reels (main's pipeline). Defaults to "video" on the backend. */
+  format?: 'reel' | 'video';
 }
 
 export interface CreatePostRequest {
