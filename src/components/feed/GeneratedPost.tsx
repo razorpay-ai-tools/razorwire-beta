@@ -13,6 +13,7 @@ import { SceneView } from '@/components/scenes/SceneView';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, docHref, type Post } from '@/lib/api';
 import { ActionRail } from './ActionRail';
+import { PostShareActions } from './PostShareActions';
 import {
   MuteButton,
   NarrationNotice,
@@ -165,6 +166,7 @@ function GeneratedVideo({ post, active }: { post: Post; active: boolean }) {
 
       <div className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">
         <div className="pl-4 pr-20">
+          <PostShareActions post={post} tone="overlay" className="mb-2.5" />
           <PostMeta post={post} />
         </div>
       </div>
@@ -321,6 +323,7 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
 
       <div className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">
         <div className="pl-4 pr-20">
+          <PostShareActions post={post} tone="overlay" className="mb-2.5" />
           <PostMeta post={post} />
         </div>
         {caption ? (

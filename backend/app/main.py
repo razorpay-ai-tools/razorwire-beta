@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import httpx
 from fastapi import (
     BackgroundTasks,
     Depends,
@@ -23,10 +24,12 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Response,
     UploadFile,
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -54,6 +57,17 @@ from .render_contract import RenderContractInvalid, emit, write_bundle
 from .slack import SlackUnavailable, fetch_thread, parse_permalink
 from .storage import store_upload
 from .storyboard import Storyboard, StoryboardInvalid
+
+# Trust the OS certificate store so outbound HTTPS verifies behind a corporate
+# TLS-intercepting proxy (whose root CA lives in the OS keychain, not in certifi).
+# Without this, Supabase Storage uploads fail with CERTIFICATE_VERIFY_FAILED and the
+# video silently falls back to local disk — which is only shareable on this machine.
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+except Exception:  # pragma: no cover - truststore optional; certifi is the fallback
+    pass
 
 log = logging.getLogger(__name__)
 
@@ -565,6 +579,51 @@ def feed(
 def get_post(post_id: str, session: SessionDep, user: UserDep) -> PostOut:
     post = _get_post(session, post_id)
     return _hydrate(session, user, [post])[0]
+
+
+def _download_filename(title: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-") or "video"
+    return f"{slug[:60]}.mp4"
+
+
+@app.get("/posts/{post_id}/download")
+def download_post_video(post_id: str, session: SessionDep) -> Response:
+    """Stream a post's MP4 as a file download, with a title-based filename.
+
+    Public on purpose: the media itself is already served unauthenticated (the /media
+    mount, or a public Supabase URL), so a plain download link works without a token.
+    Only Deep Dive videos have a file — a reel is played in the browser, not stored as
+    one, so it 404s (the UI disables the button for reels).
+    """
+    post = session.get(Post, post_id)
+    if post is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "post not found")
+    if not post.media_url:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "no downloadable video — a reel is rendered in the browser, not stored as a file",
+        )
+    filename = _download_filename(post.title)
+
+    # Local media: serve straight from disk with an attachment disposition.
+    if post.media_url.startswith("/media/"):
+        path = MEDIA_DIR / post.media_url.removeprefix("/media/")
+        if not path.is_file():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "the media file is missing on disk")
+        return FileResponse(path, media_type="video/mp4", filename=filename)
+
+    # Remote media (e.g. Supabase Storage): proxy it so the browser gets OUR attachment
+    # disposition and filename rather than the storage's inline default.
+    def _stream() -> Any:
+        with httpx.Client(timeout=120) as client, client.stream("GET", post.media_url) as upstream:
+            upstream.raise_for_status()
+            yield from upstream.iter_bytes()
+
+    return StreamingResponse(
+        _stream(),
+        media_type="video/mp4",
+        headers={"content-disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/posts", response_model=PostOut, status_code=status.HTTP_201_CREATED)

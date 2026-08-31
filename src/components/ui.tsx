@@ -30,7 +30,9 @@ export type IconName =
   | 'sparkle'
   | 'quote'
   | 'hash'
-  | 'user';
+  | 'user'
+  | 'download'
+  | 'link';
 
 const PATHS: Record<IconName, string> = {
   sun: 'M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v3M12 20v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1 12h3M20 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1',
@@ -53,6 +55,8 @@ const PATHS: Record<IconName, string> = {
   quote: 'M7 7h4v6H7zM13 7h4v6h-4zM7 13c0 2 1 3 3 4M13 13c0 2 1 3 3 4',
   hash: 'M9.5 3 7.5 21M16.5 3l-2 18M3.5 8.5h17M2.5 15.5h17',
   user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5a7.5 7.5 0 0 1 15 0',
+  download: 'M12 4v11m-4-4 4 4 4-4M4 19h16',
+  link: 'M8 12h8M9 9H7a3 3 0 0 0 0 6h2M15 9h2a3 3 0 0 0 0 6h-2',
 };
 
 interface IconProps {

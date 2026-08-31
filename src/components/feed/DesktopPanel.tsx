@@ -20,6 +20,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { StoryboardInspector } from '@/components/create/StoryboardInspector';
+import { PostShareActions } from './PostShareActions';
 import { CategoryChip, Icon, type IconName } from '@/components/ui';
 import {
   api,
@@ -291,6 +292,8 @@ export function DesktopPanel({ post, active, currentIndex }: DesktopPanelProps) 
             </span>
           </p>
         )}
+
+        {post.kind === 'generated' ? <PostShareActions post={post} className="mt-2.5" /> : null}
       </header>
 
       {/*

@@ -131,19 +131,42 @@ export function PipelineStepper({ jobId, onDone, onRetry, channelId }: PipelineS
     onDoneRef.current = onDone;
   }, [onDone]);
 
-  /** Turn the finished job into a feed post, then hand the post id back up. */
+  /** Hand the finished job's post back up.
+   *
+   * The BACKEND creates the post now — a rendered MP4 for a Deep Dive, the storyboard
+   * for a reel — and sets `job.postId`. So the job's own post is what we navigate to;
+   * creating one here as well produced a duplicate with no media_url (a media-less
+   * "reel" shadowing the real video). `postId` can lag the `published` flip by a poll,
+   * so wait for it. Only if the backend truly published nothing do we fall back to
+   * publishing the storyboard from the browser. */
   const publish = useCallback(
     async (finished: Job) => {
       if (postedRef.current) return;
-      const storyboard = finished.storyboard;
+      postedRef.current = true;
+
+      let job = finished;
+      for (let i = 0; i < 12 && !job.postId; i += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, POLL_MS));
+        try {
+          job = await api.job(finished.id);
+        } catch {
+          break;
+        }
+      }
+      if (job.postId) {
+        onDoneRef.current(job);
+        return;
+      }
+
+      // Fallback only: an older backend finished without publishing a post.
+      const storyboard = job.storyboard ?? finished.storyboard;
       if (!storyboard) {
+        postedRef.current = false;
         setPublishError(
           'The job finished but returned no storyboard, so there is nothing to publish.',
         );
         return;
       }
-
-      postedRef.current = true;
       setPublishing(true);
       setPublishError(null);
       try {
@@ -155,7 +178,7 @@ export function PipelineStepper({ jobId, onDone, onRetry, channelId }: PipelineS
           ...(storyboard.source.docId ? { sourceDocId: storyboard.source.docId } : {}),
           ...(channelId ? { channelId } : {}),
         });
-        onDoneRef.current({ ...finished, postId: post.id });
+        onDoneRef.current({ ...job, postId: post.id });
       } catch (err: unknown) {
         postedRef.current = false;
         setPublishError(messageOf(err, 'Could not add the reel to the feed.'));

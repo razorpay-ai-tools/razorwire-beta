@@ -16,6 +16,13 @@ const BASE = EXTERNAL_API_BASE ?? 'http://localhost:8000';
 const BACKEND_MODE = process.env.NEXT_PUBLIC_BACKEND_MODE ?? 'api';
 let flashViewerEmail: Promise<string | null> | null = null;
 
+/** Absolute URL that downloads a post's rendered MP4 (Deep Dive videos only). The
+ *  backend serves it as an attachment with a title-based filename; reels 404 because
+ *  they are played in the browser and have no file. */
+export function videoDownloadHref(postId: string): string {
+  return `${BASE}/posts/${postId}/download`;
+}
+
 export interface ApiUser {
   id: string;
   email: string;
