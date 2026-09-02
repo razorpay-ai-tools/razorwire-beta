@@ -38,7 +38,15 @@ import { SceneView } from '@/components/scenes/SceneView';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, type Post } from '@/lib/api';
 import { Broll } from './GeneratedPost';
-import { MuteButton, NarrationNotice, accentBackdrop, useMute } from './chrome';
+import {
+  MuteButton,
+  NarrationNotice,
+  SpeedButton,
+  accentBackdrop,
+  useMute,
+  usePlaybackRate,
+  useSpeed,
+} from './chrome';
 import { DesktopPanel } from './DesktopPanel';
 import { useNarration } from './useNarration';
 import { useReel, type Reel } from './useReel';
@@ -95,8 +103,9 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
   // Unmuted, the voice paces the reel and the timer stands down. See useNarration.
   // Never for an MP4 post: the file carries its own spoken track.
   const spoken = scenePost && !muted && active;
+  const { rate } = useSpeed();
   // Called unconditionally: a clip simply has no scenes, so the reel is empty and idle.
-  const reel = useReel(scenes, active, spoken);
+  const reel = useReel(scenes, active, spoken, rate);
   const { next, prev } = reel;
 
   // Left/right step scenes, as on mobile. Only the visible post listens.
@@ -132,6 +141,7 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
     text: reel.caption,
     audioUrl,
     enabled: spoken && reel.playing,
+    rate,
     onDone: audioUrl ? reel.next : reel.advance,
   });
 
@@ -327,6 +337,7 @@ function SceneStage({ post, active, reel }: { post: Post; active: boolean; reel:
           {/* Grouped so the pair stays right-aligned. */}
           <div className="ml-auto flex items-center gap-2">
             <NarrationNotice />
+            <SpeedButton />
             <MuteButton />
           </div>
         </div>
@@ -380,6 +391,8 @@ function ClipStage({
       video.currentTime = 0;
     }
   }, [active]);
+
+  usePlaybackRate(ref, src);
 
   const toggle = useCallback(() => {
     const video = ref.current;
@@ -459,7 +472,8 @@ function ClipStage({
           </span>
           <span className="tabular-nums">{clock(duration)}</span>
         </span>
-        <MuteButton className="ml-auto" />
+        <SpeedButton className="ml-auto" />
+        <MuteButton />
       </div>
 
       <div className="absolute inset-x-0 bottom-0 z-30 flex items-center gap-3 px-4 pb-4">

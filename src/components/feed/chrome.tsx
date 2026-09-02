@@ -85,6 +85,102 @@ export function useMute(): MuteState {
 }
 
 /**
+ * Playback speed, shared by both post variants for the same reason mute is: it is a
+ * preference, and a preference that resets on scroll is not one.
+ *
+ * The values are the ones a reader actually reaches for. 2x is deliberately the top:
+ * `SpeechSynthesis` rates above roughly 2 are clipped or refused outright by several
+ * engines, so offering 3x would work on an MP4 post and silently do nothing on a
+ * browser reel two posts down.
+ */
+export const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
+
+interface SpeedState {
+  rate: number;
+  cycle: () => void;
+}
+
+const SpeedContext = createContext<SpeedState>({ rate: 1, cycle: () => {} });
+
+export function SpeedProvider({ children }: { children: ReactNode }) {
+  const [rate, setRate] = useState(1);
+
+  const cycle = useCallback(() => {
+    setRate((current) => SPEEDS[(SPEEDS.indexOf(current as (typeof SPEEDS)[number]) + 1) % SPEEDS.length]);
+  }, []);
+
+  // `>` and `<` step the speed, matching the single-key convention `m` already sets.
+  // Shift is deliberately not excluded here — `>` IS shift-period on most layouts.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
+      const delta = event.key === '>' || event.key === '.' ? 1 : event.key === '<' || event.key === ',' ? -1 : 0;
+      if (delta === 0) return;
+      event.preventDefault();
+      setRate((current) => {
+        const at = SPEEDS.indexOf(current as (typeof SPEEDS)[number]);
+        return SPEEDS[Math.min(SPEEDS.length - 1, Math.max(0, at + delta))];
+      });
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const value = useMemo(() => ({ rate, cycle }), [rate, cycle]);
+  return <SpeedContext.Provider value={value}>{children}</SpeedContext.Provider>;
+}
+
+export function useSpeed(): SpeedState {
+  return useContext(SpeedContext);
+}
+
+/**
+ * Keeps a `<video>` at the shared rate.
+ *
+ * `playbackRate` is a property, not an attribute, so React cannot set it and it has
+ * to be assigned imperatively. It also resets to 1 whenever the element loads new
+ * media, which is why `src` is a dependency and why `loadedmetadata` re-applies it:
+ * setting it once on mount silently loses the rate the moment the source changes.
+ */
+export function usePlaybackRate(
+  ref: { current: HTMLVideoElement | null },
+  src: string | null | undefined,
+): void {
+  const { rate } = useSpeed();
+
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+
+    const apply = () => {
+      video.playbackRate = rate;
+    };
+    apply();
+    video.addEventListener('loadedmetadata', apply);
+    return () => video.removeEventListener('loadedmetadata', apply);
+  }, [ref, rate, src]);
+}
+
+/** Cycles through {@link SPEEDS}. Shows the rate as a number, because "1.5x" needs no legend. */
+export function SpeedButton({ className = '' }: { className?: string }) {
+  const { rate, cycle } = useSpeed();
+
+  return (
+    <button
+      type="button"
+      onClick={cycle}
+      aria-label={`Playback speed ${rate}x, press to change`}
+      className={`panel pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-200 transition-colors hover:text-white ${className}`}
+    >
+      <Icon name="gauge" label={null} className="size-3.5 shrink-0" />
+      <span>{rate}x</span>
+      <span className="sr-only">, press &gt; to speed up and &lt; to slow down</span>
+    </button>
+  );
+}
+
+/**
  * The one unmute control. Carries a word as well as an icon — a slashed speaker
  * alone is the kind of glyph people read as "no sound available".
  */

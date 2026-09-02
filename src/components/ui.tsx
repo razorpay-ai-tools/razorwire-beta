@@ -14,6 +14,7 @@ export type IconName =
   | 'sun'
   | 'moon'
   | 'bolt'
+  | 'gauge'
   | 'comment'
   | 'bookmark'
   | 'doc'
@@ -53,6 +54,8 @@ const PATHS: Record<IconName, string> = {
   quote: 'M7 7h4v6H7zM13 7h4v6h-4zM7 13c0 2 1 3 3 4M13 13c0 2 1 3 3 4',
   hash: 'M9.5 3 7.5 21M16.5 3l-2 18M3.5 8.5h17M2.5 15.5h17',
   user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4.5 20.5a7.5 7.5 0 0 1 15 0',
+  // Speedometer: a dial arc and a needle. Not `bolt`, which already means Like.
+  gauge: 'M3.5 18a8.5 8.5 0 1 1 17 0M12 18l4.5-5',
 };
 
 interface IconProps {

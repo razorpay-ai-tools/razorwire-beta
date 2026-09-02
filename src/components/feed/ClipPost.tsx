@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/ui';
 import type { Post } from '@/lib/api';
 import { ActionRail } from './ActionRail';
-import { MuteButton, PostMeta, accentBackdrop, useMute } from './chrome';
+import { MuteButton, PostMeta, SpeedButton, accentBackdrop, useMute, usePlaybackRate } from './chrome';
 
 function clock(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -31,6 +31,8 @@ export function ClipPost({ post, active }: { post: Post; active: boolean }) {
   const [broken, setBroken] = useState(false);
   const src = post.mediaUrl;
   const usable = Boolean(src) && !broken;
+
+  usePlaybackRate(ref, src);
 
   useEffect(() => {
     const video = ref.current;
@@ -133,7 +135,8 @@ export function ClipPost({ post, active }: { post: Post; active: boolean }) {
           </span>
           <span className="tabular-nums">{clock(duration)}</span>
         </span>
-        <MuteButton className="ml-auto" />
+        <SpeedButton className="ml-auto" />
+        <MuteButton />
       </div>
 
       <div className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">

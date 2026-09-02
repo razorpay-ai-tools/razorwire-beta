@@ -17,8 +17,11 @@ import {
   MuteButton,
   NarrationNotice,
   PostMeta,
+  SpeedButton,
   accentBackdrop,
   useMute,
+  usePlaybackRate,
+  useSpeed,
 } from './chrome';
 import { useNarration } from './useNarration';
 import { useReel } from './useReel';
@@ -110,6 +113,8 @@ function GeneratedVideo({ post, active }: { post: Post; active: boolean }) {
     }
   }, [active]);
 
+  usePlaybackRate(ref, src);
+
   function toggle() {
     const video = ref.current;
     if (!video) return;
@@ -171,7 +176,8 @@ function GeneratedVideo({ post, active }: { post: Post; active: boolean }) {
           <Icon name="sparkle" label={null} className="size-3.5 shrink-0 text-brand-300" />
           AI reel
         </span>
-        <MuteButton className="ml-auto" />
+        <SpeedButton className="ml-auto" />
+        <MuteButton />
       </div>
 
       <div className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">
@@ -190,10 +196,12 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
   const { muted } = useMute();
   // Unmuted, the voice paces the reel and the timer stands down. See useNarration.
   const spoken = !muted && active;
+  const { rate } = useSpeed();
   const { index, count, scene, caption, playing, setPlaying, next, prev, advance } = useReel(
     scenes,
     active,
     spoken,
+    rate,
   );
 
   // Left/right arrows move scenes, stories-style. Only the visible post listens.
@@ -235,6 +243,7 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
     text: caption,
     audioUrl,
     enabled: spoken && playing,
+    rate,
     onDone: audioUrl ? next : advance,
     onProgress: setProgress,
   });
@@ -338,6 +347,7 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
           {/* Grouped so the pair stays right-aligned. */}
           <div className="ml-auto flex items-center gap-2">
             <NarrationNotice />
+            <SpeedButton />
             <MuteButton />
           </div>
         </div>
