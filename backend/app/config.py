@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     #: relative "/media/..." would resolve against the web app and 404. Responses carry
     #: absolute URLs instead, which keeps every client correct without each one having
     #: to know where media lives.
-    public_base_url: str = "http://localhost:8000"
+    #:
+    #: 127.0.0.1 rather than `localhost` for the same reason the web client uses it: the
+    #: name resolves to ::1 first, where any wildcard `*:8000` bind on the machine
+    #: answers instead of us, so media URLs built on `localhost` 404 in the browser.
+    public_base_url: str = "http://127.0.0.1:8000"
 
     # --- auth -----------------------------------------------------------------
     google_client_id: str = ""
@@ -27,6 +31,16 @@ class Settings(BaseSettings):
     #: Local escape hatch. When set and no bearer token is presented, requests are
     #: treated as this user. Leave empty in anything shared.
     dev_auth_email: str = ""
+    #: Shared secret required on every API request when set, sent as
+    #: `X-Razorwire-Secret`. Exists for one situation: this backend reachable over a
+    #: public tunnel with `dev_auth_email` still set, where anyone holding the URL
+    #: would otherwise be that user and could spend `litellm_api_key`.
+    #:
+    #: A spend guard, NOT an identity gate — the web app ships it in a public bundle,
+    #: so anyone who can load the frontend can read it. Whatever gates the frontend
+    #: (AiSites SSO today) is what decides *who* gets in. Empty disables the check, so
+    #: a laptop-only run is unaffected.
+    tunnel_secret: str = ""
 
     # --- pipeline -------------------------------------------------------------
     #: Razorpay's LiteLLM gateway. It serves Anthropic's own `/v1/messages` shape and

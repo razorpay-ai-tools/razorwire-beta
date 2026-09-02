@@ -23,10 +23,12 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -65,13 +67,46 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Razorwire API", version="0.1.0", lifespan=lifespan)
+
+# Comma-separated, because a tunnelled backend serves the hosted frontend AND the
+# local one at the same time, and CORS is an allow-list of exact origins.
+_WEB_ORIGINS = {origin.strip() for origin in settings.web_origin.split(",") if origin.strip()}
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.web_origin],
+    # Both spellings of loopback. They are different origins to a browser, and the web
+    # app is reachable at either, so allowing only one turns a typed 127.0.0.1 into a
+    # site where every request is blocked and the feed looks empty.
+    allow_origins=sorted(_WEB_ORIGINS | {o.replace("localhost", "127.0.0.1") for o in _WEB_ORIGINS}),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+#: Exempt from `tunnel_secret`. `/media` is the load-bearing one: a browser
+#: `<video src>` cannot carry a custom header, so gating it would mean no video plays
+#: anywhere. A finished MP4 is therefore protected only by its URL. `/health` stays
+#: open so an uptime monitor needs no secret, and the docs are a static schema.
+_SECRET_EXEMPT_PREFIXES = ("/health", "/media/", "/docs", "/redoc", "/openapi.json")
+
+
+@app.middleware("http")
+async def require_tunnel_secret(request: Request, call_next):
+    """Reject requests without the shared secret, when one is configured.
+
+    Outermost middleware, so it runs before CORS — hence the OPTIONS exemption. A
+    preflight carries no custom headers by definition, so rejecting it would turn
+    every cross-origin call into an opaque CORS failure rather than a clean 401.
+    """
+    if (
+        settings.tunnel_secret
+        and request.method != "OPTIONS"
+        and not request.url.path.startswith(_SECRET_EXEMPT_PREFIXES)
+        and request.headers.get("x-razorwire-secret") != settings.tunnel_secret
+    ):
+        return JSONResponse(
+            {"detail": "missing or invalid X-Razorwire-Secret"}, status_code=status.HTTP_401_UNAUTHORIZED
+        )
+    return await call_next(request)
 
 MEDIA_DIR = Path(settings.media_dir)
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
