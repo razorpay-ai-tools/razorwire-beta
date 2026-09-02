@@ -52,16 +52,35 @@ def render_from_voiced(sb: Storyboard, voiced: list[tts.Voiced], work_dir: Path)
     width, height, fps = settings.render_width, settings.render_height, settings.render_fps
 
     clips = [_scene_clip(scene) for scene in sb.scenes]
+    # The first cue is the opening subtitle; the capture step swaps in the rest. A
+    # scene whose backend produced no cues falls back to its whole narration.
     htmls = [
-        html.scene_html(scene, width=width, height=height, over_footage=clip is not None)
-        for scene, clip in zip(sb.scenes, clips)
+        html.scene_html(
+            scene,
+            width=width,
+            height=height,
+            over_footage=clip is not None,
+            caption=spoken.cues[0].text if spoken.cues else None,
+        )
+        for scene, clip, spoken in zip(sb.scenes, clips, voiced)
     ]
     frame_sets = capture.capture_scenes(
-        htmls, work_dir, width=width, height=height, keep_alpha=[c is not None for c in clips]
+        htmls,
+        work_dir,
+        width=width,
+        height=height,
+        keep_alpha=[c is not None for c in clips],
+        cues=[spoken.cues for spoken in voiced],
     )
 
     segments = [
-        compose.Segment(pngs=frames, wav=spoken.wav_path, duration_ms=spoken.duration_ms, clip=clip)
+        compose.Segment(
+            pngs=frames.content,
+            wav=spoken.wav_path,
+            duration_ms=spoken.duration_ms,
+            clip=clip,
+            captions=frames.captions,
+        )
         for spoken, frames, clip in zip(voiced, frame_sets, clips)
     ]
     mp4 = compose.compose(

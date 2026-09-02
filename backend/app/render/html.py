@@ -49,14 +49,19 @@ def _cite_chip(scene: Any) -> str:
     return f'<div class="cite">{_esc(cite)}</div>'
 
 
-def _caption(scene: Any) -> str:
-    """The spoken narration, shown as a caption bar. Burned into the frame here
-    because this ffmpeg build has no subtitles filter, and it keeps captions in sync
-    with the voice for free — the whole scene holds for the length of this narration."""
-    narration = getattr(scene, "narration", None)
-    if not narration:
-        return ""
-    return f'<div class="caption">{_esc(narration)}</div>'
+def _caption(scene: Any, caption: str | None) -> str:
+    """The subtitle line for THIS frame, burned in because this ffmpeg build has no
+    subtitles filter (no libass, no drawtext) — so text can only reach the video by
+    being in the PNG.
+
+    ``caption`` is one speech-synced cue; ``None`` means the caller has no timing and
+    wants the whole narration, which is the old whole-scene behaviour and the fallback
+    when a TTS backend cannot time words. The element is always emitted, even empty,
+    so ``__setCaption`` has something to write into on later frames.
+    """
+    if caption is None:
+        caption = getattr(scene, "narration", None) or ""
+    return f'<div class="caption" id="caption">{_esc(caption)}</div>'
 
 
 def _content(scene: Any) -> str:
@@ -130,6 +135,40 @@ def _pane(pane: Any) -> str:
 _REVEAL_JS = """
   window.__stepCount = 1;
   window.__reveal = function (step) {};
+  // Swaps the subtitle line without reloading the page, so one page load produces
+  // every frame of the scene — a reload per cue would re-run Mermaid each time.
+  window.__setCaption = function (text) {
+    const el = document.getElementById('caption');
+    if (el) el.textContent = text || '';
+  };
+  // Isolates the subtitle onto its own transparent plate, so ffmpeg can hard-cut it
+  // over content that is still cross-fading. Baking both into one PNG made every cue
+  // change a 300ms dissolve between two DIFFERENT texts — two subtitles legible at
+  // once, and the whole frame dimmed to ~50% while it happened.
+  // 'caption' is destructive (it drops the page background to get alpha), so the
+  // capture step always takes the content pass first.
+  window.__layer = function (which) {
+    const caption = document.getElementById('caption');
+    const rest = Array.from(document.body.children).filter(
+      (el) => el !== caption && el.tagName !== 'SCRIPT',
+    );
+    if (which === 'caption') {
+      document.documentElement.style.background = 'none';
+      document.body.style.background = 'none';
+      // `display`, NOT `visibility`. __reveal sets visibility:visible on individual
+      // bullets and diagram nodes, and an explicit value on a child beats an
+      // inherited `hidden` on its parent — so hiding .block by visibility left every
+      // revealed bullet painted onto the transparent plate, which then composited
+      // back over the content and showed the whole list from the first frame.
+      // `display:none` drops the subtree outright and cannot be overridden from
+      // inside it. Safe for layout here because the caption is absolutely positioned.
+      rest.forEach((el) => { el.style.display = 'none'; });
+      if (caption) caption.style.visibility = 'visible';
+    } else {
+      rest.forEach((el) => { el.style.display = ''; });
+      if (caption) caption.style.visibility = 'hidden';
+    }
+  };
   function initReveal() {
     const bullets = Array.from(document.querySelectorAll('.bullets li'));
     if (bullets.length > 1) {
@@ -195,11 +234,15 @@ _MERMAID_INIT = f"""
 _STATIC_READY = f"<script>{_REVEAL_JS}\ninitReveal(); window.__ready = true;</script>"
 
 
-def scene_html(scene: Any, *, width: int, height: int, over_footage: bool = False) -> str:
+def scene_html(
+    scene: Any, *, width: int, height: int, over_footage: bool = False, caption: str | None = None
+) -> str:
     """Full HTML document for one scene, sized ``width`` x ``height``.
 
     ``over_footage`` swaps the opaque mood gradient for a translucent scrim, so the
     captured PNG keeps alpha and ffmpeg can composite it over a looping b-roll clip.
+    ``caption`` is the subtitle line for the first frame; the capture step replaces it
+    per frame via ``window.__setCaption``. ``None`` shows the whole narration.
     """
     top, bottom = _mood_colors(scene)
     background = (
@@ -216,13 +259,29 @@ def scene_html(scene: Any, *, width: int, height: int, over_footage: bool = Fals
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <style>
+  /* The subtitle is an overlay, so it is OUTSIDE the flow and cannot push content
+     out of its way — the content has to be kept out of ITS way instead. These three
+     numbers are the contract: the band is reserved as bottom padding, so scene
+     content is laid out above it and can never be covered.
+     --caption-lines is 2 because a cue is capped at _CUE_MAX_CHARS in tts.py, which
+     at this size wraps to at most two lines in this width. Raising either without
+     the other is what would put text over a diagram. */
+  :root {{
+    --caption-bottom: 96px;
+    --caption-lines: 2;
+    --caption-line-height: 1.3;
+    --caption-font: 46px;
+    --caption-height: calc(var(--caption-font) * var(--caption-line-height) * var(--caption-lines));
+    /* the band, plus a gap so content never sits flush against the type */
+    --caption-band: calc(var(--caption-bottom) + var(--caption-height) + 56px);
+  }}
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   html, body {{ width: {width}px; height: {height}px; overflow: hidden; }}
   body {{
     font-family: Inter, -apple-system, "Segoe UI", system-ui, sans-serif;
     color: #f8fafc; background: {background};
     display: flex; flex-direction: column; justify-content: center;
-    padding: 150px 84px 240px;
+    padding: 150px 84px var(--caption-band);
   }}
   .cite {{
     position: absolute; top: 96px; left: 84px;
@@ -257,18 +316,35 @@ def scene_html(scene: Any, *, width: int, height: int, over_footage: bool = Fals
     color: #e2e8f0; white-space: pre-wrap; word-break: break-word; }}
   .outro-cta {{ font-size: 80px; font-weight: 800; letter-spacing: -.02em; }}
   .outro-url {{ margin-top: 40px; font: 500 34px/1 "SF Mono", ui-monospace, monospace; color: #93c5fd; }}
+  /* A subtitle overlay, not a caption bar: no panel, no border, no backdrop — just
+     type sitting on the picture, the way burned-in subtitles look everywhere else.
+     Legibility over arbitrary footage comes from a paint-order stroke plus a soft
+     drop shadow, which holds on both a white diagram and a dark plate. `-webkit-
+     text-stroke` alone would eat into the glyphs; `paint-order: stroke` draws the
+     stroke UNDER the fill so the letterforms stay intact.
+     The box is a fixed height of two lines and the text is bottom-aligned inside it,
+     so a one-line cue followed by a two-line cue does not make the block jump. */
   .caption {{
-    position: absolute; left: 72px; right: 72px; bottom: 96px; text-align: center;
-    font-size: 40px; line-height: 1.34; font-weight: 500; color: #f1f5f9;
-    background: rgba(2,6,23,.58); border: 1px solid rgba(148,163,184,.28);
-    border-radius: 22px; padding: 26px 34px; backdrop-filter: blur(2px);
+    position: absolute; left: 96px; right: 96px; bottom: var(--caption-bottom);
+    /* Fixed height, not min-height: the band is reserved above, and a cue that
+       somehow ran to three lines must clip rather than grow upward over a diagram.
+       Bottom-aligned so a one-line cue does not make the block jump between cues. */
+    height: var(--caption-height); overflow: hidden;
+    display: flex; align-items: flex-end; justify-content: center;
+    text-align: center; text-wrap: balance;
+    font-size: var(--caption-font); line-height: var(--caption-line-height);
+    font-weight: 700; letter-spacing: -.01em;
+    color: #ffffff;
+    paint-order: stroke fill;
+    -webkit-text-stroke: 9px rgba(2, 6, 23, .82);
+    text-shadow: 0 3px 18px rgba(2, 6, 23, .95), 0 1px 3px rgba(2, 6, 23, .9);
   }}
 </style>
 {mermaid_tag}
 </head><body>
 {_cite_chip(scene)}
 {_content(scene)}
-{_caption(scene)}
+{_caption(scene, caption)}
 {ready}
 </body></html>
 """
