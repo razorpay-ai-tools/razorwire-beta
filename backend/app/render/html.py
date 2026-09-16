@@ -75,6 +75,36 @@ def _caption(scene: Any) -> str:
     return f'<div class="caption">{_esc(narration)}</div>'
 
 
+_CUE_PUNCT = ".,;:!?—"
+
+
+def caption_cues(text: str, start_ms: int, dur_ms: int, max_words: int = 7) -> list[tuple[int, str]]:
+    """Break ``text`` into short subtitle cues (a few words each, split at natural
+    punctuation) and time each to when it is spoken — a cue's start is proportional to
+    how far into the text it begins, across ``dur_ms`` from ``start_ms``. So a scene's
+    narration rolls as short film-style subtitles instead of one wall of text."""
+    text = (text or "").strip()
+    if not text:
+        return []
+    cues: list[str] = []
+    cur: list[str] = []
+    for word in text.split():
+        cur.append(word)
+        clause_end = word[-1:] in _CUE_PUNCT
+        if len(cur) >= max_words or (clause_end and len(cur) >= 3):
+            cues.append(" ".join(cur))
+            cur = []
+    if cur:
+        cues.append(" ".join(cur))
+    total = sum(len(c.split()) for c in cues) or 1
+    out: list[tuple[int, str]] = []
+    acc = 0
+    for cue in cues:
+        out.append((start_ms + int(acc / total * dur_ms), cue))
+        acc += len(cue.split())
+    return out
+
+
 def _content(scene: Any) -> str:
     kind = scene.type
     if kind == "title":
@@ -146,15 +176,16 @@ def _pane(pane: Any) -> str:
 _ANIM_SCRIPT = r"""
 <script>
 window.__ready=false;
-const DURATION_MS=__DUR__, DIR="__DIR__", FADE=600, DRAW=850;
+const DURATION_MS=__DUR__, DIR="__DIR__", CUES=__CUES__, FADE=600, DRAW=850;
 const clamp=x=>Math.max(0,Math.min(1,x));
+function setCap(t){if(!CUES.length)return;let i=-1;for(let k=0;k<CUES.length;k++){if(t>=CUES[k][0])i=k;}const c=document.querySelector('.caption');if(c)c.textContent=i>=0?CUES[i][1]:'';}
 function collect(){
   const svg=document.querySelector('.mermaid svg'); if(!svg) return [];
   const along=el=>{try{const r=el.getBoundingClientRect();return (DIR==='LR'||DIR==='RL')?r.left+r.width/2:r.top+r.height/2;}catch(e){return 1e9;}};
   const nodes=[...svg.querySelectorAll('g.node')];
   let edges=[...svg.querySelectorAll('g.edgePaths path')];
   if(!edges.length) edges=[...svg.querySelectorAll('path.flowchart-link')];
-  const labels=[...svg.querySelectorAll('g.edgeLabels .edgeLabel')];
+  const labels=[...svg.querySelectorAll('g.edgeLabels g.edgeLabel')];
   const items=[];
   nodes.forEach(el=>items.push({el,type:'node',p:along(el)}));
   edges.forEach(el=>items.push({el,type:'edge',p:along(el),len:(el.getTotalLength?el.getTotalLength():0)}));
@@ -163,6 +194,7 @@ function collect(){
   return items;
 }
 window.__seek=function(t){
+  setCap(t);
   const items=collect();
   const STEP=(DURATION_MS*0.88)/Math.max(items.length,1);
   items.forEach((it,i)=>{
@@ -185,45 +217,59 @@ mermaid.run({querySelector:'.mermaid'}).then(()=>{window.__seek(0);window.__read
 _STATIC_READY = "<script>window.__ready = true;</script>"
 
 
+# Non-diagram scenes don't animate, but the caption still rolls its cues over time, so
+# they are frame-stepped too — __seek just advances the subtitle to the phrase being spoken.
+_CAPTION_SCRIPT = r"""
+<script>
+window.__ready=false;
+const CUES=__CUES__;
+function setCap(t){if(!CUES.length)return;let i=-1;for(let k=0;k<CUES.length;k++){if(t>=CUES[k][0])i=k;}const c=document.querySelector('.caption');if(c)c.textContent=i>=0?CUES[i][1]:'';}
+window.__seek=function(t){ setCap(t); };
+window.__seek(0); window.__ready=true;
+</script>
+"""
+
+
 # Synced diagram walkthrough: each hop is revealed when its narration beat starts
-# (T = per-beat start times in ms), and the caption shows the beat being spoken. The
-# reveal is grouped by hop (a new group begins at each edge), so a box + its incoming
-# arrow appear together exactly as that step is narrated. Guaranteed in sync because
-# both the diagram and the timeline come from the same steps.
+# (T = per-beat start times in ms), and the caption shows the beat being spoken. Nodes
+# and edges are indexed by their sorted on-screen position (top-to-bottom for graph TD),
+# and mapped to a hop by that index: node 0 is on screen from the start, node i appears
+# when hop i-1 is narrated, and edge i (with its label) draws on hop i's beat. Indexing
+# per-type is deliberate — the earlier running-counter over a single mixed list was
+# thrown off by mermaid's empty edge-label elements (which cluster at the top of the SVG)
+# and by the group count overshooting T, which silently revealed the last node at t=0.
+# Any index past the end of T clamps to the final beat, so nothing ever snaps to the start.
 _SYNC_SCRIPT = r"""
 <script>
 window.__ready=false;
-const T=__T__, BEATS=__BEATS__, FADE=600, DRAW=850;
+const T=__T__, CUES=__CUES__, FADE=600, DRAW=850;
 const clamp=x=>Math.max(0,Math.min(1,x));
+const LAST=T.length?T[T.length-1]:0;
+const along=el=>{try{const r=el.getBoundingClientRect();return r.top+r.height/2;}catch(e){return 1e9;}};
+function setCap(t){if(!CUES.length)return;let i=-1;for(let k=0;k<CUES.length;k++){if(t>=CUES[k][0])i=k;}const c=document.querySelector('.caption');if(c)c.textContent=i>=0?CUES[i][1]:'';}
 function collect(){
-  const svg=document.querySelector('.mermaid svg'); if(!svg) return [];
-  const along=el=>{try{const r=el.getBoundingClientRect();return r.top+r.height/2;}catch(e){return 1e9;}};
-  const nodes=[...svg.querySelectorAll('g.node')];
+  const svg=document.querySelector('.mermaid svg'); if(!svg) return null;
+  const nodes=[...svg.querySelectorAll('g.node')].sort((a,b)=>along(a)-along(b));
   let edges=[...svg.querySelectorAll('g.edgePaths path')];
   if(!edges.length) edges=[...svg.querySelectorAll('path.flowchart-link')];
-  const labels=[...svg.querySelectorAll('g.edgeLabels .edgeLabel')];
-  const items=[];
-  nodes.forEach(el=>items.push({el,type:'node',p:along(el)}));
-  edges.forEach(el=>items.push({el,type:'edge',p:along(el),len:(el.getTotalLength?el.getTotalLength():0)}));
-  labels.forEach(el=>items.push({el,type:'label',p:along(el)}));
-  items.sort((a,b)=>a.p-b.p);
-  return items;
+  edges.sort((a,b)=>along(a)-along(b));
+  // One group per edge ('g.edgeLabels g.edgeLabel'; the inner text is a <span>, not a
+  // <g>), and drop mermaid's empty labels (rendered even for unlabelled edges).
+  const labels=[...svg.querySelectorAll('g.edgeLabels g.edgeLabel')]
+    .filter(el=>el.textContent.trim()).sort((a,b)=>along(a)-along(b));
+  return {nodes, edges, labels};
 }
 window.__seek=function(t){
-  let bi=0; for(let i=0;i<T.length;i++){ if(t>=T[i]) bi=i; }
-  const cap=document.querySelector('.caption'); if(cap) cap.textContent=BEATS[bi]||'';
-  const items=collect();
-  let group=0, lastType='node';
-  items.forEach(it=>{
-    if((it.type==='edge'||it.type==='label') && lastType==='node') group++;
-    const revealAt = group===0 ? 0 : (T[group-1] ?? 0);
-    const local=t-revealAt;
-    if(it.type==='edge'){
-      it.el.style.opacity=local>=0?1:0;
-      if(it.len){it.el.style.strokeDasharray=it.len;it.el.style.strokeDashoffset=it.len*(1-clamp(local/DRAW));}
-    }else{ it.el.style.opacity=clamp(local/FADE); }
-    lastType=it.type;
+  setCap(t);
+  const c=collect(); if(!c) return;
+  c.nodes.forEach((el,i)=>{ const r=i===0?0:(T[i-1]??LAST); el.style.opacity=clamp((t-r)/FADE); });
+  c.edges.forEach((el,i)=>{
+    const r=(T[i]??LAST), local=t-r;
+    el.style.opacity=local>=0?1:0;
+    const len=el.getTotalLength?el.getTotalLength():0;
+    if(len){el.style.strokeDasharray=len;el.style.strokeDashoffset=len*(1-clamp(local/DRAW));}
   });
+  c.labels.forEach((el,i)=>{ const r=(T[i]??LAST); el.style.opacity=clamp((t-r)/FADE); });
 };
 mermaid.initialize({startOnLoad:false,theme:'dark',
   themeVariables:{fontFamily:'Inter, system-ui, sans-serif',fontSize:'30px',lineColor:'#93c5fd'}});
@@ -241,31 +287,35 @@ def scene_html(
     duration_ms: int = 0,
     beats: list[str] | None = None,
     beat_starts: list[int] | None = None,
+    caption_cues: list[tuple[int, str]] | None = None,
 ) -> str:
     """Full HTML document for one scene, sized ``width`` x ``height``.
 
-    For a diagram scene, ``beats`` + ``beat_starts`` produce a SYNCED walkthrough:
-    each hop is revealed and captioned exactly when its narration beat starts. Without
-    them a diagram still animates, evenly paced over ``duration_ms``. Other scenes are
-    static frames. Diagram scenes expose ``window.__seek(t)`` for the capture step.
+    Every scene exposes ``window.__seek(t)`` and is frame-stepped, so the caption rolls
+    ``caption_cues`` (short phrases timed to the audio) like film subtitles. A diagram
+    scene additionally draws itself: with ``beats`` + ``beat_starts`` each hop is revealed
+    when its narration beat starts, otherwise it is evenly paced over ``duration_ms``.
     """
     top, bottom = _mood_colors(scene)
     animate = is_animated(scene)
     synced = bool(animate and beats and beat_starts)
     mermaid_tag = f'<script src="file://{MERMAID_JS}"></script>' if animate else ""
+    cues_json = json.dumps([[int(at), txt] for at, txt in (caption_cues or [])])
+    # With cues the caption rolls (filled per-cue by __seek); without them (a direct call
+    # or the browser reel) fall back to the full narration as a static caption.
+    caption_html = '<div class="caption"></div>' if caption_cues else _caption(scene)
     if synced:
         ready = _SYNC_SCRIPT.replace("__T__", json.dumps(list(beat_starts))).replace(
-            "__BEATS__", json.dumps(list(beats))
+            "__CUES__", cues_json
         )
-        caption_html = '<div class="caption"></div>'  # filled per-beat by __seek
     elif animate:
-        ready = _ANIM_SCRIPT.replace("__DUR__", str(duration_ms or 8000)).replace(
-            "__DIR__", _direction(scene.mermaid)
+        ready = (
+            _ANIM_SCRIPT.replace("__DUR__", str(duration_ms or 8000))
+            .replace("__DIR__", _direction(scene.mermaid))
+            .replace("__CUES__", cues_json)
         )
-        caption_html = _caption(scene)
     else:
-        ready = _STATIC_READY
-        caption_html = _caption(scene)
+        ready = _CAPTION_SCRIPT.replace("__CUES__", cues_json)
 
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
@@ -298,6 +348,17 @@ def scene_html(
   .diagram {{ display: flex; justify-content: center; align-items: center; }}
   .diagram .mermaid {{ width: 100%; }}
   .diagram svg {{ width: 100%; height: auto; max-height: 1100px; }}
+  /* Edge labels: a subtle dark chip with light text instead of mermaid's opaque grey
+     box, so a labelled arrow reads cleanly and does not flash an empty grey box while
+     the label fades in. */
+  .diagram .edgeLabel .labelBkg,
+  .diagram .edgeLabel foreignObject > div {{
+    background-color: rgba(11,16,32,.92) !important; border-radius: 10px;
+  }}
+  .diagram .edgeLabel, .diagram .edgeLabel p, .diagram .edgeLabel span {{
+    color: #dbe4f3 !important; font-size: 26px !important; font-weight: 500;
+    background-color: transparent !important;
+  }}
   .compare {{ display: flex; gap: 40px; }}
   .pane {{ flex: 1; background: rgba(15,23,42,.5); border: 1px solid rgba(148,163,184,.25);
     border-radius: 28px; padding: 40px; }}
@@ -311,11 +372,14 @@ def scene_html(
     color: #e2e8f0; white-space: pre-wrap; word-break: break-word; }}
   .outro-cta {{ font-size: 80px; font-weight: 800; letter-spacing: -.02em; }}
   .outro-url {{ margin-top: 40px; font: 500 34px/1 "SF Mono", ui-monospace, monospace; color: #93c5fd; }}
+  /* A compact, film-style subtitle: one short phrase at a time, centred, hugging its
+     text (short cue -> small box) instead of a full-width multi-sentence block. */
   .caption {{
-    position: absolute; left: 72px; right: 72px; bottom: 96px; text-align: center;
-    font-size: 40px; line-height: 1.34; font-weight: 500; color: #f1f5f9;
-    background: rgba(2,6,23,.58); border: 1px solid rgba(148,163,184,.28);
-    border-radius: 22px; padding: 26px 34px; backdrop-filter: blur(2px);
+    position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%);
+    max-width: 80%; width: max-content; text-align: center;
+    font-size: 42px; line-height: 1.25; font-weight: 600; color: #f8fafc;
+    background: rgba(2,6,23,.66); border: 1px solid rgba(148,163,184,.26);
+    border-radius: 16px; padding: 14px 30px; text-shadow: 0 2px 8px rgba(0,0,0,.55);
   }}
 </style>
 {mermaid_tag}

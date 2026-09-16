@@ -22,11 +22,13 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SceneCapture:
-    """One scene to capture: its HTML, whether it animates, and its length."""
+    """One scene to capture: its HTML, whether it frame-steps, its length, and the fps
+    to step it at (high for a self-drawing diagram, low for a caption-only still)."""
 
     html: str
     animated: bool
     duration_ms: int
+    fps: int = 24
 
 
 @dataclass(frozen=True)
@@ -77,10 +79,11 @@ def capture(
                     log.warning("scene %d did not signal ready in %dms", index, timeout_ms)
 
                 if spec.animated and spec.duration_ms > 0:
-                    n_frames = max(1, int(spec.duration_ms / 1000 * fps))
+                    scene_fps = spec.fps or fps
+                    n_frames = max(1, int(spec.duration_ms / 1000 * scene_fps))
                     frames: list[Path] = []
                     for f in range(n_frames + 1):
-                        t = f * (1000.0 / fps)
+                        t = f * (1000.0 / scene_fps)
                         try:
                             page.evaluate("window.__seek(%f)" % t)
                         except Exception:

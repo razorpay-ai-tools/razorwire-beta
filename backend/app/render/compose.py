@@ -24,10 +24,12 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Segment:
-    #: one path -> a static still; many -> an animated frame sequence
+    #: one path -> a static still; many -> a frame sequence
     frames: list[Path]
     wav: Path
     duration_ms: int
+    #: fps the frames were captured at (the sequence's input rate; output stays uniform)
+    capture_fps: int = 24
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
@@ -56,7 +58,7 @@ def _encode_scene(seg: Segment, seg_name: str, work: Path, *, fps: int, width: i
         # Animated: a frame sequence scene0_%04d.png. apad keeps audio to video length.
         pattern = re.sub(r"\d{4}(\.png)$", r"%04d\1", seg.frames[0].name)
         _run(
-            ["ffmpeg", "-y", "-framerate", str(fps), "-start_number", "0", "-i", pattern,
+            ["ffmpeg", "-y", "-framerate", str(seg.capture_fps), "-start_number", "0", "-i", pattern,
              "-i", seg.wav.name, "-filter_complex", "[1:a]apad[a]", "-map", "0:v", "-map", "[a]",
              *common_out],
             cwd=work,
