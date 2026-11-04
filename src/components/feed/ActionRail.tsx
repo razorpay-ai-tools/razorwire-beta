@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { Icon, type IconName } from '@/components/ui';
 import { api, compactCount, type Post, type Toggle } from '@/lib/api';
 import { CommentSheet } from './CommentSheet';
+import { AutoHide } from './chrome';
 
 function RailButton({
   icon,
@@ -94,7 +95,7 @@ export function ActionRail({
 
   return (
     <div className="pointer-events-none absolute inset-0 z-30">
-      <div className={`pointer-events-auto absolute flex flex-col items-center ${anchorClassName}`}>
+      <AutoHide className={`pointer-events-auto absolute flex flex-col items-center ${anchorClassName}`}>
         <RailButton
           icon="bolt"
           label={like.active ? 'Remove like' : 'Like'}
@@ -137,7 +138,7 @@ export function ActionRail({
             <span className="sr-only">Open the source document in a new tab</span>
           </a>
         ) : null}
-      </div>
+      </AutoHide>
 
       {failure ? (
         <p

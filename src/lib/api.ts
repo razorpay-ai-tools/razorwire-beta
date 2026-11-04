@@ -77,6 +77,8 @@ export interface Post {
   mediaUrl: string | null;
   storageKey: string | null;
   thumbnailUrl: string | null;
+  /** The HyperFrames composition itself, scrubbable in the feed's player. */
+  interactiveUrl: string | null;
   durationMs: number | null;
   storyboard: Storyboard | null;
   sourceDocId: string | null;
@@ -321,6 +323,8 @@ type StoredPost = CreatePostRequest & {
   author: ApiUser;
   views: number;
   createdAt: string;
+  /** Set by the backend's publish step only; never sent on create. */
+  interactiveUrl?: string;
 };
 
 type StoredChannel = {
@@ -465,6 +469,7 @@ function postOut(
     mediaUrl: post.mediaUrl ?? null,
     storageKey: post.storageKey ?? null,
     thumbnailUrl: post.thumbnailUrl ?? null,
+    interactiveUrl: post.interactiveUrl ?? null,
     durationMs: post.durationMs ?? null,
     storyboard: post.storyboard ?? null,
     sourceDocId: post.sourceDocId ?? null,

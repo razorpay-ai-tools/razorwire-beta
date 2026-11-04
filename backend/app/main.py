@@ -28,7 +28,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -86,7 +86,7 @@ app.add_middleware(
 #: `<video src>` cannot carry a custom header, so gating it would mean no video plays
 #: anywhere. A finished MP4 is therefore protected only by its URL. `/health` stays
 #: open so an uptime monitor needs no secret, and the docs are a static schema.
-_SECRET_EXEMPT_PREFIXES = ("/health", "/media/", "/docs", "/redoc", "/openapi.json")
+_SECRET_EXEMPT_PREFIXES = ("/health", "/media/", "/downloads/", "/docs", "/redoc", "/openapi.json")
 
 
 @app.middleware("http")
@@ -111,6 +111,21 @@ async def require_tunnel_secret(request: Request, call_next):
 MEDIA_DIR = Path(settings.media_dir)
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
+
+
+@app.get("/downloads/{filename}")
+def download_media(filename: str) -> FileResponse:
+    """The same file `/media/{filename}` serves, but as an attachment.
+
+    The anchor `download` attribute is ignored cross-origin, so the
+    Content-Disposition header is what makes the browser save the MP4 instead of
+    playing it. Lives outside `/media` because the StaticFiles mount shadows any
+    route under it. `{filename}` cannot contain `/`, so no traversal is possible.
+    """
+    path = MEDIA_DIR / filename
+    if filename.startswith(".") or not path.is_file():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such file")
+    return FileResponse(path, filename=filename, content_disposition_type="attachment")
 
 
 # --------------------------------------------------------------------------- wire types
@@ -198,6 +213,7 @@ class PostOut(_Out):
     media_url: str | None
     storage_key: str | None
     thumbnail_url: str | None
+    interactive_url: str | None = None
     duration_ms: int | None
     storyboard: dict[str, Any] | None
     source_doc_id: str | None
@@ -346,6 +362,14 @@ def _to_out(
         **{
             **post.model_dump(),
             "media_url": _absolute_media(post.media_url),
+            # The poster is stored beside the MP4 and needs exactly the same
+            # qualifying. It was always None until render/poster.py started writing
+            # one, which is why this line is newer than the one above it — a relative
+            # "/media/x.jpg" resolves against :3000 and 404s, so the <video> would
+            # silently fall back to its first frame, which is the black frame the
+            # poster exists to replace.
+            "thumbnail_url": _absolute_media(post.thumbnail_url),
+            "interactive_url": _absolute_media(post.interactive_url),
             "storyboard": _absolute_storyboard(post.storyboard),
         },
         author=UserOut.model_validate(author),
@@ -843,6 +867,7 @@ def _render_and_publish(
     lazily either way, so an absent optional dependency never blocks boot.
     """
     from .render import RenderUnavailable, render_from_voiced, voice_storyboard
+    from .render.hyperframes import publish_interactive
     from .render.publish import publish_render, publish_storyboard_only
 
     work_dir = Path(settings.work_dir) / (media_id or job.id)
@@ -857,7 +882,10 @@ def _render_and_publish(
         session.commit()
         result = render_from_voiced(storyboard, voiced, work_dir)
 
-        publish_render(session, job, storyboard, result, media_id=media_id, channel_id=channel_id)
+        publish_render(
+            session, job, storyboard, result, media_id=media_id, channel_id=channel_id,
+            interactive_url=publish_interactive(storyboard, voiced, media_id or job.id),
+        )
     except RenderUnavailable as exc:
         if required:
             raise RuntimeError(
@@ -880,8 +908,9 @@ def _voice_reel(
     *,
     media_id: str | None = None,
     span: tuple[int, int] = (20, 100),
-) -> None:
-    """Best-effort narration audio for a browser reel.
+) -> str | None:
+    """Best-effort narration audio for a browser reel, returning the interactive
+    composition's URL when one could be built from it.
 
     The same kokoro voice a rendered MP4 gets, encoded per scene to AAC and served
     from ``/media``, so the reel plays a real voice instead of the Web Speech API.
@@ -892,6 +921,7 @@ def _voice_reel(
     The voicing and encoding themselves live in ``render.publish`` so the repair script
     re-voices old posts through exactly this path rather than a copy of it.
     """
+    from .render.hyperframes import publish_interactive
     from .render.publish import voice_scenes_to_media
 
     key = media_id or job.id
@@ -900,12 +930,16 @@ def _voice_reel(
         session.add(job)
         session.commit()
 
-        if not voice_scenes_to_media(storyboard, Path(settings.work_dir) / key, key):
+        voiced = voice_scenes_to_media(storyboard, Path(settings.work_dir) / key, key)
+        if not voiced:
             log.info("no reel audio for %s; keeping Web Speech narration", job.id)
+            return None
+        return publish_interactive(storyboard, voiced, key)
     except Exception as exc:
         log.warning("reel voicing failed (%s); publishing without audio", exc)
         for scene in storyboard.scenes:
             scene.audio_url = None
+        return None
 
 
 def _run_job(job_id: str, body: GenerateRequest) -> None:
@@ -1028,8 +1062,13 @@ def _run_job(job_id: str, body: GenerateRequest) -> None:
                         # API. Best-effort: without it the reel publishes exactly as before.
                         from .render.publish import publish_storyboard_only
 
-                        _voice_reel(session, job, storyboard, media_id=media_id, span=span)
-                        publish_storyboard_only(session, job, storyboard, channel_id=channel_id)
+                        interactive_url = _voice_reel(
+                            session, job, storyboard, media_id=media_id, span=span
+                        )
+                        publish_storyboard_only(
+                            session, job, storyboard, channel_id=channel_id,
+                            interactive_url=interactive_url,
+                        )
                         # Voicing stamped durations and audio URLs; keep the job's copy in step.
                         job.storyboard = storyboard_to_json(storyboard)
                         job.state, job.progress = "published", _scaled(100, span)

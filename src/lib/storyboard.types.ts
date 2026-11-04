@@ -12,6 +12,9 @@
 export const BROLL_MOODS = ['dataflow', 'servers', 'team', 'money', 'abstract', 'city'] as const;
 export type BrollMood = 'dataflow' | 'servers' | 'team' | 'money' | 'abstract' | 'city';
 
+/** Look, motion and story shape, picked by the model from the source's tone. */
+export type Theme = 'explainer' | 'launch' | 'incident' | 'blueprint';
+
 export const MAX_MERMAID_NODES = 7;
 export const MAX_SPOKEN_SECONDS = 105;
 
@@ -59,7 +62,7 @@ export type Scene =
 export type SceneType = Scene['type'];
 
 export type Storyboard = {
-  meta: { title: string; tags: string[] };
+  meta: { title: string; tags: string[]; theme?: Theme };
   source: { kind: 'aidoc' | 'topic'; docId?: string; url?: string; title?: string };
   scenes: Scene[];
 };

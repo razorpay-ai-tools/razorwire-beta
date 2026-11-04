@@ -35,10 +35,15 @@ import {
   type CSSProperties,
 } from 'react';
 import { SceneView } from '@/components/scenes/SceneView';
+import { InteractivePlayer } from './InteractivePlayer';
 import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, type Post } from '@/lib/api';
-import { Broll } from './GeneratedPost';
+import { accentStyle } from '@/lib/themes';
+import { Broll, StageSwitch } from './GeneratedPost';
 import {
+  AutoHide,
+  ControlBar,
+  DownloadButton,
   MuteButton,
   NarrationNotice,
   SpeedButton,
@@ -97,8 +102,14 @@ function isTyping(target: EventTarget | null): boolean {
 export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
   const scenes = useMemo(() => post.storyboard?.scenes ?? [], [post.storyboard]);
   const generated = post.kind === 'generated';
-  // A generated post with an MP4 plays the file; only without one is it live scenes.
-  const scenePost = generated && !post.mediaUrl;
+  // A generated post with an MP4 plays the file; with a published composition it plays
+  // that interactively; only with neither is it live DOM scenes.
+  // A post with both can be flipped between them; the MP4 stays the default.
+  const [preferInteractive, setPreferInteractive] = useState(false);
+  const both = Boolean(post.mediaUrl && post.interactiveUrl);
+  const interactive =
+    generated && Boolean(post.interactiveUrl) && (!post.mediaUrl || preferInteractive);
+  const scenePost = generated && !post.mediaUrl && !interactive;
   const { muted } = useMute();
   // Unmuted, the voice paces the reel and the timer stands down. See useNarration.
   // Never for an MP4 post: the file carries its own spoken track.
@@ -148,6 +159,7 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
   return (
     <article
       aria-label={`${generated ? 'Generated reel' : 'Clip'}: ${post.title}`}
+      style={accentStyle(post)}
       /*
        * pb-20 clears the app's create bar, which is pinned to the bottom centre.
        *
@@ -199,10 +211,34 @@ export function DesktopCard({ post, active }: { post: Post; active: boolean }) {
           style={STAGE_STYLE}
           className="stage-dark relative aspect-[9/16] h-full shrink-0 overflow-hidden bg-neutral-950"
         >
-          {scenePost ? (
+          {interactive ? (
+            <>
+              <InteractivePlayer
+                src={post.interactiveUrl as string}
+                poster={post.thumbnailUrl}
+                active={active}
+                muted={muted}
+              />
+              <ControlBar active={active}>
+                <span className="panel flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-300">
+                  <Icon name="sparkle" label={null} className="size-3.5 shrink-0 text-brand-300" />
+                  Interactive
+                </span>
+                <MuteButton className="ml-auto" />
+                <DownloadButton mediaUrl={post.mediaUrl} />
+                {both ? <StageSwitch to="Video" onSwitch={() => setPreferInteractive(false)} /> : null}
+              </ControlBar>
+            </>
+          ) : scenePost ? (
             <SceneStage post={post} active={active} reel={reel} />
           ) : (
-            <ClipStage post={post} active={active} generated={generated} />
+            <ClipStage
+              post={post}
+              active={active}
+              generated={generated}
+              // In the strip, not pinned over it: pinned top-right it sat on the download.
+              onSwitch={both ? () => setPreferInteractive(true) : undefined}
+            />
           )}
         </div>
 
@@ -364,10 +400,12 @@ function ClipStage({
   post,
   active,
   generated = false,
+  onSwitch,
 }: {
   post: Post;
   active: boolean;
   generated?: boolean;
+  onSwitch?: () => void;
 }) {
   const { muted } = useMute();
   const ref = useRef<HTMLVideoElement>(null);
@@ -440,7 +478,8 @@ function ClipStage({
       />
       <div
         aria-hidden
-        className="absolute inset-x-0 bottom-0 z-10 h-32 bg-gradient-to-t from-neutral-950 via-neutral-950/70 to-transparent"
+        // Seek-bar height only: taller, it sat on the captions the MP4 burns in above it.
+        className="absolute inset-x-0 bottom-0 z-10 h-12 bg-gradient-to-t from-neutral-950/70 to-transparent"
       />
 
       {usable ? (
@@ -459,7 +498,7 @@ function ClipStage({
         </button>
       ) : null}
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-4 pt-4">
+      <ControlBar active={active}>
         <span className="panel flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-300">
           {generated ? (
             <Icon name="sparkle" label={null} className="size-3.5 shrink-0 text-brand-300" />
@@ -467,16 +506,14 @@ function ClipStage({
             <Icon name="play" label={null} filled className="size-3 shrink-0 text-neutral-400" />
           )}
           {generated ? 'AI reel' : 'Clip'}
-          <span aria-hidden className="text-neutral-600">
-            &middot;
-          </span>
-          <span className="tabular-nums">{clock(duration)}</span>
         </span>
         <SpeedButton className="ml-auto" />
         <MuteButton />
-      </div>
+        <DownloadButton mediaUrl={post.mediaUrl} />
+        {onSwitch ? <StageSwitch to="Interactive" onSwitch={onSwitch} /> : null}
+      </ControlBar>
 
-      <div className="absolute inset-x-0 bottom-0 z-30 flex items-center gap-3 px-4 pb-4">
+      <AutoHide className="absolute inset-x-0 bottom-0 z-30 flex items-center gap-3 px-4 pb-4">
         <label htmlFor={`desktop-seek-${post.id}`} className="sr-only">
           Seek clip
         </label>
@@ -504,7 +541,7 @@ function ClipStage({
           </span>
           {clock(duration)}
         </span>
-      </div>
+      </AutoHide>
     </>
   );
 }

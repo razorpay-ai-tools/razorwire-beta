@@ -82,9 +82,9 @@ Rules that matter more than style:
    payoff, a full stop instead of a run-on. Read your narration aloud in your head — if you
    run out of air, so will the voice.
 
-3c. TONE IS LIGHT. Warm, upbeat and plainly glad to explain — a colleague sharing something
-   genuinely useful, not a system issuing a briefing. Problems are the setup for a fix, never
-   doom. Keep it professional: light means easy to listen to, not jokey.
+3c. TONE FOLLOWS THE THEME (rule 6). Always professional and easy to listen to, never
+   jokey, never doom — but a launch should sound proud, an incident calm and exact, a deep
+   dive curious. Do not write every source in the same voice.
 
 4. BUDGET. {{min_scenes}} to {{max_scenes}} scenes, and all narration together runs 60 to 90
    seconds spoken — roughly 150 to 220 words in total. Use the room to actually cover the
@@ -111,7 +111,27 @@ Rules that matter more than style:
    behind your content and carries no information. Use `abstract` behind dense scenes such as
    diagrams and code, where busy footage would fight the overlay.
 
-Shape a story, not a summary: the problem, what changes, and what the viewer must not get wrong.
+6. THEME. Read the source's tone and set `meta.theme`. The theme changes the look, the
+   motion AND the story shape, so two different documents must not come out as the same
+   video. Pick the one that fits; `explainer` only when nothing else does.
+
+   - `launch` — something shipped, a win, a metric moved. A brag reel. Open on the
+     result or the number in the first scene (a `title` whose heading IS the result).
+     Then what it unlocks for the viewer, one diagram of how it works, and close on the
+     flex. Short, punchy headings of 2 to 5 words. Proud, energetic narration.
+   - `incident` — an RCA, a postmortem, an outage, a bug hunt. Cold open on the symptom
+     as a customer saw it. Then what happened in order, the root cause as a `diagram`,
+     the fix, and the guardrail that stops it recurring. Calm, precise, no blame.
+   - `blueprint` — a design doc, an architecture or rearch proposal, internals. Open on
+     the question the design answers. Walk the architecture, show the trade-off (a
+     `compare` or two diagrams), and end on what was decided and why. Curious, exact.
+   - `explainer` — how an existing thing works, a guide, onboarding. Problem, how it
+     works, the one thing people get wrong. Warm and plainly glad to explain.
+
+   Vary the scene mix to fit the shape: not every reel is title, bullets, diagram, code,
+   outro. A launch may have no code; an incident may open with bullets as a timeline.
+
+Shape a story, not a summary.
 """
 
 _TOOL_NAME = "emit_storyboard"
@@ -148,9 +168,10 @@ start to finish. Write it as a short informative film, not as slides:
 - ONE WORKED EXAMPLE, carried through. Pick a single concrete case the document supports —
   one request, one mandate, one outage — and follow it across the scenes so the viewer
   tracks a story instead of a list of facts. Use the document's real names and numbers.
-- ARC, NOT AGENDA. Open on the stake: what breaks, what it costs, who feels it. The very
-  first sentence is a hook under twelve words. Turn on the change. Close on what is
-  different now. Never open with "this document covers".
+- ARC, NOT AGENDA. The theme's story shape (rule 6) decides where the arc starts — the
+  result for a launch, the symptom for an incident, the question for a blueprint, the
+  stake for an explainer. Whatever it is, the very first sentence is a hook under twelve
+  words. Never open with "this document covers".
 - SPOKEN, NOT WRITTEN. Contractions, short sentences, one idea per sentence. The voice is
   the whole soundtrack, so a sentence that would be skimmed on screen has to be heard. No
   lists read aloud as lists.
@@ -257,6 +278,13 @@ def run_script_stage(
             )
             break
         try:
+            # Non-streaming on purpose: the gateway kills long-lived streams ("peer
+            # closed connection ... incomplete chunked read"), so streaming trades the
+            # 420s read timeout for a mid-generation drop. glm-5p3 (Sep 2026) cannot
+            # finish a generation-sized reply through the gateway either way — even a
+            # 6-scene probe with thinking disabled exceeds 420s — while glm-5p2 does
+            # the same probe in ~40s. Until the gateway's 5p3 deployment speeds up,
+            # run this stage on glm-5p2 (LLM_MODEL env override).
             response = client.messages.create(
                 model=settings.llm_model,
                 # glm-5p2 is a reasoning model and the budget must cover thinking AND

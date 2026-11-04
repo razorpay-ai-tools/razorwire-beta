@@ -18,7 +18,8 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react';
-import { CategoryChip, Icon } from '@/components/ui';
+import { CategoryChip, Icon, ThemeBadge } from '@/components/ui';
+import { postTheme } from '@/lib/themes';
 import { compactCount, initialsOf, type Post } from '@/lib/api';
 import { primeSpeech, useSpeechVoiceCount } from './useNarration';
 
@@ -202,6 +203,176 @@ export function MuteButton({ className = '' }: { className?: string }) {
 }
 
 /**
+ * Saves the rendered MP4 so it can be shared outside the feed.
+ *
+ * Links `/downloads/…` rather than the `/media/…` the player uses: the anchor
+ * `download` attribute is ignored cross-origin, so the backend's
+ * Content-Disposition header is what actually makes the browser save the file.
+ */
+export function DownloadButton({
+  mediaUrl,
+  className = '',
+}: {
+  mediaUrl: string | null | undefined;
+  className?: string;
+}) {
+  if (!mediaUrl) return null;
+
+  return (
+    <a
+      href={mediaUrl.replace('/media/', '/downloads/')}
+      download
+      aria-label="Download video"
+      title="Download video"
+      // Icon-only: the strip holds five controls on a phone, and a labelled download
+      // was the one that got pushed off the edge or under the stage switch.
+      className={`panel pointer-events-auto grid place-items-center p-1.5 text-neutral-200 transition-colors hover:text-white ${className}`}
+    >
+      <Icon name="download" label={null} className="size-3.5 shrink-0" />
+    </a>
+  );
+}
+
+/**
+ * How long the top controls stay up before getting out of the way. Long enough to
+ * notice and reach them, short enough that a reel you are actually watching is
+ * unobstructed for most of its length.
+ */
+const CONTROLS_IDLE_MS = 3000;
+
+interface IdleState {
+  visible: boolean;
+  wake: () => void;
+}
+
+const IdleContext = createContext<IdleState>({ visible: true, wake: () => {} });
+
+/**
+ * One idle clock for every piece of chrome that sits over the video.
+ *
+ * Deliberately a single shared timer rather than one per overlay: the control strip,
+ * the action rail, the metadata block, the seek bar and the app nav all cover the same
+ * frame, and three of them fading on their own schedules reads as a glitch rather than
+ * as a player getting out of the way. They appear and disappear together or not at all.
+ *
+ * Mounted in `page.tsx` rather than in `FeedScreen`, because the app nav pill is a
+ * sibling of the feed and has to read the same clock.
+ */
+export function ChromeIdleProvider({ children }: { children: ReactNode }) {
+  const [visible, setVisible] = useState(true);
+
+  const wake = useCallback(() => setVisible(true), []);
+
+  useEffect(() => {
+    let timer = 0;
+    const arm = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setVisible(false), CONTROLS_IDLE_MS);
+    };
+    const bump = () => {
+      setVisible(true);
+      arm();
+    };
+
+    arm();
+    // On `window`, not on the feed element: this is a full-bleed snap feed, so a
+    // pointer moving anywhere is a viewer reaching for the controls of whatever post
+    // is on screen. `keydown` is what keeps the chrome reachable without a mouse.
+    for (const event of ['pointermove', 'pointerdown', 'keydown', 'touchstart'] as const) {
+      window.addEventListener(event, bump, { passive: true });
+    }
+    return () => {
+      window.clearTimeout(timer);
+      for (const event of ['pointermove', 'pointerdown', 'keydown', 'touchstart'] as const) {
+        window.removeEventListener(event, bump);
+      }
+    };
+  }, []);
+
+  const value = useMemo(() => ({ visible, wake }), [visible, wake]);
+  return <IdleContext.Provider value={value}>{children}</IdleContext.Provider>;
+}
+
+export function useChromeIdle(): IdleState {
+  return useContext(IdleContext);
+}
+
+/**
+ * Fades its children out once the viewer stops interacting, and back in the moment
+ * they do.
+ *
+ * Hidden with `opacity`, deliberately not `visibility` or `hidden`: both of those drop
+ * anything focusable out of the tab order, and a control a keyboard user can no longer
+ * reach is not hidden, it is gone. Opacity keeps them focusable and `focusin` brings
+ * the group straight back, so tabbing to the speed button shows it.
+ *
+ * `.controls-idle` (globals.css) switches pointer events off underneath while hidden —
+ * a parent's `pointer-events: none` is re-enabled by any descendant setting `auto`, so
+ * an invisible Download link or Like button would otherwise still swallow the tap
+ * meant for play/pause.
+ *
+ * Hover pins it open too, or the group fades out from under a pointer already resting
+ * on the button about to be clicked.
+ */
+export function AutoHide({
+  className = '',
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  const { visible } = useChromeIdle();
+  const [pinned, setPinned] = useState(false);
+  const shown = visible || pinned;
+
+  return (
+    <div
+      onFocusCapture={() => setPinned(true)}
+      onBlurCapture={() => setPinned(false)}
+      onPointerEnter={() => setPinned(true)}
+      onPointerLeave={() => setPinned(false)}
+      className={`${className} transition-opacity duration-300 motion-reduce:transition-none ${
+        shown ? 'opacity-100' : 'controls-idle opacity-0'
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The top control strip — badge, speed, mute, download. Positioning only; the fade
+ * and the pointer-event handling belong to {@link AutoHide}, which every other
+ * overlay on the frame shares so they move as one.
+ */
+export function ControlBar({
+  active = true,
+  children,
+}: {
+  active?: boolean;
+  children: ReactNode;
+}) {
+  const { wake } = useChromeIdle();
+
+  // A post scrolling into view shows its chrome again — otherwise the strip is only
+  // ever discoverable on the first post of a session. Reset during render rather than
+  // in an effect, which is what `react-hooks/set-state-in-effect` is for and what
+  // `PipelineStepper` already does for the same reason: waking from an effect paints
+  // one frame of the previous post's hidden state first.
+  const [trackedActive, setTrackedActive] = useState(active);
+  if (trackedActive !== active) {
+    setTrackedActive(active);
+    if (active) wake();
+  }
+
+  return (
+    <AutoHide className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-2 whitespace-nowrap px-4 pt-4 [&>*]:shrink-0">
+      {children}
+    </AutoHide>
+  );
+}
+
+/**
  * Says so when this browser cannot speak.
  *
  * A synthesizer with no voices returns no sound and no error, so an unmuted reel looked
@@ -232,12 +403,13 @@ export function NarrationNotice() {
  */
 export function PostMeta({ post }: { post: Post }) {
   const author = post.author.name || post.author.email;
+  const theme = postTheme(post);
 
   return (
     <div className="flex items-start gap-3">
       <span
         aria-hidden
-        className="grid size-9 shrink-0 place-items-center rounded-full border border-white/15 bg-neutral-900/85 font-mono text-[11px] font-bold tracking-tight text-brand-300 backdrop-blur-md"
+        className="grid size-9 shrink-0 place-items-center rounded-full border border-white/15 bg-neutral-900/85 font-mono text-[11px] font-bold tracking-tight text-[var(--post-accent,var(--color-brand-300))] backdrop-blur-md"
       >
         {initialsOf(post.author)}
       </span>
@@ -256,6 +428,7 @@ export function PostMeta({ post }: { post: Post }) {
           {/* The channel is the label that matters once you can follow one; the
               category is the fallback for posts that predate channels. */}
           <CategoryChip category={post.channel ? `#${post.channel.slug}` : post.category} />
+          {theme ? <ThemeBadge theme={theme} /> : null}
         </div>
 
         <h2 className="mt-1.5 text-pretty text-[17px] font-semibold leading-snug tracking-tight text-white [text-shadow:0_1px_3px_rgb(0_0_0/0.9)]">

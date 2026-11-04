@@ -52,9 +52,9 @@ class Settings(BaseSettings):
     #: direct Anthropic key rather than a gateway one.
     litellm_api_key: str = ""
     anthropic_api_key: str = ""
-    #: Whatever the gateway routes. `glm-5p2` today; a Claude model here would also work,
+    #: Whatever the gateway routes. `glm-5p3` today; a Claude model here would also work,
     #: since the gateway speaks the same wire format either way.
-    llm_model: str = "glm-5p2"
+    llm_model: str = "glm-5p3"
 
     # --- aidocs ingestion -----------------------------------------------------
     aidocs_server: str = "https://aidocs.razorpay.com"
@@ -99,6 +99,28 @@ class Settings(BaseSettings):
     work_dir: str = "./.work"
 
     # --- render (MP4 pipeline) ------------------------------------------------
+    #: Which engine turns the voiced storyboard into an MP4.
+    #:
+    #:   "ffmpeg"      capture stills with Playwright, join them with xfade. The
+    #:                 original path; scenes are cross-faded screenshots.
+    #:   "hyperframes" author one HTML composition with a seekable GSAP timeline and
+    #:                 render it with the HyperFrames CLI. Elements animate
+    #:                 individually, subtitles are their own timed clips, and
+    #:                 `hyperframes check` gates layout and WCAG contrast before a
+    #:                 single frame is encoded. Needs Node 22+ on PATH.
+    #:
+    #: Both read the same storyboard and the same measured narration durations, so a
+    #: reel rendered either way is timed identically.
+    #:
+    #: Default is "hyperframes". A box without Node 22+ does not need to set this:
+    #: `render_from_voiced` catches the missing toolchain and falls back to ffmpeg,
+    #: so the default is safe to ship ahead of the deploy image.
+    render_engine: str = "hyperframes"
+    #: Post-render QA: EBU R128 loudness normalisation, plus black/silent/frozen
+    #: detection logged as warnings. Adds one audio-only ffmpeg pass per render.
+    render_qa: bool = True
+    #: Optional music bed under the narration, at BED_VOLUME. Empty = narration only.
+    render_music_bed: str = ""
     render_fps: int = 30
     render_width: int = 1080
     render_height: int = 1920

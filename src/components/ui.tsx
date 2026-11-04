@@ -9,6 +9,8 @@
  */
 
 import type { Scene } from '@/lib/storyboard.types';
+import { THEME_STYLE } from '@/lib/themes';
+import type { Theme } from '@/lib/storyboard.types';
 
 export type IconName =
   | 'sun'
@@ -26,6 +28,7 @@ export type IconName =
   | 'close'
   | 'send'
   | 'upload'
+  | 'download'
   | 'check'
   | 'alert'
   | 'sparkle'
@@ -48,6 +51,7 @@ const PATHS: Record<IconName, string> = {
   close: 'M5 5l14 14M19 5 5 19',
   send: 'M3 20l18-8L3 4l4 8z',
   upload: 'M12 16V4m0 0L7 9m5-5 5 5M4 18v2h16v-2',
+  download: 'M12 4v12m0 0l5-5m-5 5-5-5M4 18v2h16v-2',
   check: 'M4 12l5 5L20 6',
   alert: 'M12 3l9 16H3zM12 9v5M12 17h.01',
   sparkle: 'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z',
@@ -146,7 +150,7 @@ export function ProgressRail({
         <span key={i} className="h-1 flex-1 overflow-hidden rounded-full bg-white/25">
           <span
             className={`block h-full rounded-full transition-[width] duration-300 ${
-              i <= current ? 'w-full bg-brand-400' : 'w-0'
+              i <= current ? 'w-full bg-[var(--post-accent,var(--color-brand-400))]' : 'w-0'
             }`}
           />
         </span>
@@ -170,6 +174,23 @@ export function CategoryChip({ category }: { category: string }) {
   return (
     <span className="inline-flex items-center rounded-full border border-hairline bg-surface-2/70 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink backdrop-blur-md">
       {category}
+    </span>
+  );
+}
+
+/**
+ * Which video theme a generated post was made in. The dot carries the post's accent,
+ * the label carries the meaning, so the colour is never the only signal.
+ */
+export function ThemeBadge({ theme }: { theme: Theme }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-surface-2/70 px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink backdrop-blur-md">
+      <span
+        aria-hidden
+        className="size-1.5 rounded-full"
+        style={{ background: THEME_STYLE[theme].accent }}
+      />
+      {THEME_STYLE[theme].label}
     </span>
   );
 }

@@ -14,6 +14,9 @@ import { CaptionBar, Icon, ProgressRail, scrimFor } from '@/components/ui';
 import { brollSrc, docHref, type Post } from '@/lib/api';
 import { ActionRail } from './ActionRail';
 import {
+  AutoHide,
+  ControlBar,
+  DownloadButton,
   MuteButton,
   NarrationNotice,
   PostMeta,
@@ -23,6 +26,8 @@ import {
   usePlaybackRate,
   useSpeed,
 } from './chrome';
+import { accentStyle } from '@/lib/themes';
+import { InteractivePlayer } from './InteractivePlayer';
 import { useNarration } from './useNarration';
 import { useReel } from './useReel';
 
@@ -86,13 +91,107 @@ export function GeneratedPost({ post, active }: { post: Post; active: boolean })
   // on the post for the Spec view. Without an MP4 (tooling absent, or still on the
   // browser-reel path) fall back to the live scene player. Two components, so the
   // hooks in each stay stable regardless of which path a post takes.
-  if (post.mediaUrl) return <GeneratedVideo post={post} active={active} />;
+  // A video post that also has its composition published can be flipped to it.
+  const [interactive, setInteractive] = useState(false);
+  const both = Boolean(post.mediaUrl && post.interactiveUrl);
+  if (post.mediaUrl && !(interactive && both)) {
+    return (
+      <GeneratedVideo
+        post={post}
+        active={active}
+        onSwitch={both ? () => setInteractive(true) : undefined}
+      />
+    );
+  }
+  if (post.interactiveUrl) {
+    return (
+      <GeneratedInteractive
+        post={post}
+        active={active}
+        onSwitch={both ? () => setInteractive(false) : undefined}
+      />
+    );
+  }
   return <GeneratedReel post={post} active={active} />;
+}
+
+/** Flips a post with both an MP4 and a composition between the two. */
+export function StageSwitch({ to, onSwitch }: { to: 'Video' | 'Interactive'; onSwitch: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onSwitch}
+      aria-label={`Switch to ${to.toLowerCase()}`}
+      title={`Switch to ${to.toLowerCase()}`}
+      className="panel pointer-events-auto flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-200 hover:text-white"
+    >
+      <Icon name={to === 'Video' ? 'play' : 'sparkle'} label={null} className="size-3.5 shrink-0" />
+      {/* Icon-only on phones, where the label pushed download off the strip. */}
+      <span className="hidden sm:inline">{to}</span>
+    </button>
+  );
+}
+
+/** A browser reel with a published HyperFrames composition: the themed, animated
+ *  reel played live and scrubbable, instead of the plain DOM scenes. */
+function GeneratedInteractive({
+  post,
+  active,
+  onSwitch,
+}: {
+  post: Post;
+  active: boolean;
+  onSwitch?: () => void;
+}) {
+  const { muted } = useMute();
+  return (
+    <article
+      aria-label={`Interactive reel: ${post.title}`}
+      style={accentStyle(post)}
+      className="relative flex size-full flex-col overflow-hidden bg-neutral-950"
+    >
+      {/* The reel burns its captions into its own bottom band, so the metadata gets a
+          band of its own below the stage instead of a scrim over the captions. */}
+      <div className="relative min-h-0 flex-1">
+        <InteractivePlayer
+          src={post.interactiveUrl as string}
+          poster={post.thumbnailUrl}
+          active={active}
+          muted={muted}
+        />
+      </div>
+      <ControlBar active={active}>
+        <span className="panel flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-300">
+          <Icon
+            name="sparkle"
+            label={null}
+            className="size-3.5 shrink-0 text-[var(--post-accent,var(--color-brand-300))]"
+          />
+          Interactive
+        </span>
+        {onSwitch ? <StageSwitch to="Video" onSwitch={onSwitch} /> : null}
+        <MuteButton className="ml-auto" />
+        <DownloadButton mediaUrl={post.mediaUrl} />
+      </ControlBar>
+      <div className="shrink-0 pb-20 pl-4 pr-20 pt-3">
+        <PostMeta post={post} />
+      </div>
+      <ActionRail post={post} specHref={docHref(post.storyboard)} />
+    </article>
+  );
 }
 
 /** A generated explainer that has been rendered to an MP4. Plays the file, keeps the
  *  "AI reel" badge and the Spec citation action that a plain clip does not have. */
-function GeneratedVideo({ post, active }: { post: Post; active: boolean }) {
+function GeneratedVideo({
+  post,
+  active,
+  onSwitch,
+}: {
+  post: Post;
+  active: boolean;
+  onSwitch?: () => void;
+}) {
   const { muted } = useMute();
   const ref = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -125,65 +224,65 @@ function GeneratedVideo({ post, active }: { post: Post; active: boolean }) {
   return (
     <article
       aria-label={`Generated reel: ${post.title}`}
-      className="relative size-full overflow-hidden bg-neutral-950"
+      style={accentStyle(post)}
+      className="relative flex size-full flex-col overflow-hidden bg-neutral-950"
     >
-      {usable && src ? (
-        <video
-          ref={ref}
-          src={src}
-          poster={post.thumbnailUrl ?? undefined}
-          muted={muted}
-          loop
-          playsInline
-          preload="metadata"
-          tabIndex={-1}
-          onError={() => setBroken(true)}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          className="absolute inset-0 size-full object-cover"
+      {/* Stage above, metadata below: the MP4 carries burned-in captions in its bottom
+          band, and a full-bleed cover crop plus a 40% scrim hid exactly that band. */}
+      <div className="relative min-h-0 flex-1">
+        {usable && src ? (
+          <video
+            ref={ref}
+            src={src}
+            poster={post.thumbnailUrl ?? undefined}
+            muted={muted}
+            loop
+            playsInline
+            preload="metadata"
+            tabIndex={-1}
+            onError={() => setBroken(true)}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            className="absolute inset-0 size-full object-contain"
+          />
+        ) : (
+          <div aria-hidden className="absolute inset-0" style={accentBackdrop(post.accent)} />
+        )}
+
+        {/* Top band only: the badge strip sits over the frame's title padding. */}
+        <div
+          aria-hidden
+          className="absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-neutral-950/85 to-transparent"
         />
-      ) : (
-        <div aria-hidden className="absolute inset-0" style={accentBackdrop(post.accent)} />
-      )}
 
-      {/* Bands, as on ClipPost: the badge and PostMeta sit over arbitrary rendered
-          footage, and without these the metadata was raw white text on the frame. */}
-      <div
-        aria-hidden
-        className="absolute inset-x-0 top-0 z-10 h-24 bg-gradient-to-b from-neutral-950/85 to-transparent"
-      />
-      <div
-        aria-hidden
-        className="absolute inset-x-0 bottom-0 z-10 h-2/5 bg-gradient-to-t from-neutral-950 via-neutral-950/70 to-transparent"
-      />
+        <button
+          type="button"
+          tabIndex={active ? 0 : -1}
+          onClick={toggle}
+          aria-label={playing ? 'Pause reel' : 'Play reel'}
+          className="absolute inset-0 z-20 grid place-items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400"
+        >
+          {!playing ? (
+            <span className="grid size-16 place-items-center rounded-full border border-white/20 bg-neutral-950/70 text-white backdrop-blur-md">
+              <Icon name="play" label={null} filled className="size-7 translate-x-0.5" />
+            </span>
+          ) : null}
+        </button>
+      </div>
 
-      <button
-        type="button"
-        tabIndex={active ? 0 : -1}
-        onClick={toggle}
-        aria-label={playing ? 'Pause reel' : 'Play reel'}
-        className="absolute inset-0 z-20 grid place-items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-400"
-      >
-        {!playing ? (
-          <span className="grid size-16 place-items-center rounded-full border border-white/20 bg-neutral-950/70 text-white backdrop-blur-md">
-            <Icon name="play" label={null} filled className="size-7 translate-x-0.5" />
-          </span>
-        ) : null}
-      </button>
-
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-4 pt-4">
+      <ControlBar active={active}>
         <span className="panel flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-300">
           <Icon name="sparkle" label={null} className="size-3.5 shrink-0 text-brand-300" />
           AI reel
         </span>
+        {onSwitch ? <StageSwitch to="Interactive" onSwitch={onSwitch} /> : null}
         <SpeedButton className="ml-auto" />
         <MuteButton />
-      </div>
+        <DownloadButton mediaUrl={post.mediaUrl} />
+      </ControlBar>
 
-      <div className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">
-        <div className="pl-4 pr-20">
-          <PostMeta post={post} />
-        </div>
+      <div className="shrink-0 pb-20 pl-4 pr-20 pt-3">
+        <PostMeta post={post} />
       </div>
 
       <ActionRail post={post} specHref={docHref(post.storyboard)} />
@@ -271,6 +370,7 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
   return (
     <article
       aria-label={`Generated reel: ${post.title}`}
+      style={accentStyle(post)}
       className="relative size-full overflow-hidden bg-neutral-950"
     >
       <Broll src={brollSrc(scene)} accent={post.accent} active={active} />
@@ -353,7 +453,7 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
         </div>
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">
+      <AutoHide className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">
         <div className="pl-4 pr-20">
           <PostMeta post={post} />
         </div>
@@ -362,7 +462,7 @@ function GeneratedReel({ post, active }: { post: Post; active: boolean }) {
             <CaptionBar text={caption} />
           </div>
         ) : null}
-      </div>
+      </AutoHide>
 
       <ActionRail post={post} specHref={docHref(post.storyboard)} />
     </article>

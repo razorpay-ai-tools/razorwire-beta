@@ -910,3 +910,29 @@ def test_a_transient_model_failure_is_retried_not_fatal(monkeypatch):
     sb = run_script_stage(kind="topic", text="anything at all")
     assert calls["n"] == 2, "the second attempt should have run"
     assert sb.meta.title
+
+
+def test_a_posters_url_is_absolute_like_the_video_it_belongs_to(client):
+    """`thumbnail_url` is stored relative and must be qualified on the way out.
+
+    It was always None until `render/poster.py` began writing a poster, so the
+    serialiser had no reason to cover it. Left relative, "/media/x.jpg" resolves
+    against the web app's origin rather than this service's, 404s, and the <video>
+    quietly falls back to its own first frame — which is the black frame the poster
+    exists to replace, so the bug looks like the feature never shipped.
+    """
+    created = client.post(
+        "/posts",
+        json={
+            "title": "Poster URL Test",
+            "kind": "clip",
+            "mediaUrl": "/media/poster-test.mp4",
+            "thumbnailUrl": "/media/poster-test.jpg",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    body = client.get(f"/posts/{created.json()['id']}").json()
+    assert body["mediaUrl"].startswith("http"), body["mediaUrl"]
+    assert body["thumbnailUrl"].startswith("http"), body["thumbnailUrl"]
+    assert body["thumbnailUrl"].endswith("/media/poster-test.jpg")

@@ -15,7 +15,7 @@
 import { useEffect, useRef } from 'react';
 import { docHref } from '@/lib/api';
 import type { Scene, SceneType, Storyboard } from '@/lib/storyboard.types';
-import { CitationChip, Icon } from '@/components/ui';
+import { CitationChip, Icon, ThemeBadge } from '@/components/ui';
 
 /** Scene types the contract requires a `cite` on, because they state something. */
 const FACTUAL: ReadonlySet<SceneType> = new Set(['bullets', 'diagram', 'compare', 'code']);
@@ -50,9 +50,12 @@ export function StoryboardInspector({ storyboard, currentIndex }: StoryboardInsp
       aria-label="Storyboard inspector"
     >
       <header className="shrink-0 border-b border-hairline px-4 py-4">
-        <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-300">
-          Storyboard
-        </p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-300">
+            Storyboard
+          </p>
+          <ThemeBadge theme={meta.theme ?? 'explainer'} />
+        </div>
         <h2 className="mt-1.5 text-base font-semibold leading-snug tracking-tight text-ink">
           {meta.title}
         </h2>
