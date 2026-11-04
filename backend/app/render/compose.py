@@ -23,8 +23,10 @@ Everything runs with ``cwd`` set to the work directory so ffmpeg takes bare file
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
+from concurrent import futures
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,17 +62,38 @@ OPEN_FADE_S = 0.4
 
 @dataclass(frozen=True)
 class Segment:
-    #: The scene's build-up, one frame per reveal step; frames split the narration
-    #: length evenly. A single frame simply holds.
+    #: The scene's frames, in playback order — one wherever the reveal step or the
+    #: subtitle changed. A single frame simply holds.
     pngs: list[Path]
     wav: Path
     duration_ms: int
     #: Looping background footage; the PNGs (captured with alpha) are overlaid on it.
     clip: Path | None = None
+    #: ``(png, start_ms, end_ms)`` subtitle plates, composited ON TOP of the finished
+    #: build-up and switched with a hard cut. Separate from ``pngs`` because they are
+    #: timed to the voice rather than evenly spaced, and because cross-fading them
+    #: would show two different subtitles at once.
+    captions: list[tuple[Path, int, int]] | None = None
+
+
+#: Ceiling on one ffmpeg invocation. Generous — a whole-video join pass on a slow
+#: box takes tens of seconds, not minutes — but bounded, because an ffmpeg that
+#: hangs has nothing to time it out: the job sits in `rendering` forever and the
+#: browser polls it forever. Now that segments encode in a pool, one stuck process
+#: would also hold a worker for the rest of the run.
+_FFMPEG_TIMEOUT_SECONDS = 600
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
-    result = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd, cwd=str(cwd), capture_output=True, text=True,
+            timeout=_FFMPEG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"ffmpeg did not finish within {_FFMPEG_TIMEOUT_SECONDS}s: {' '.join(cmd[:6])}…"
+        ) from exc
     if result.returncode != 0:
         tail = "\n".join(result.stderr.strip().splitlines()[-8:])
         raise RuntimeError(f"ffmpeg failed ({result.returncode}):\n{tail}")
@@ -83,11 +106,17 @@ def _still_filter(width: int, height: int, fps: int) -> str:
 
 
 def _reveal_filter(
-    width: int, height: int, fps: int, *, steps: int, dur_s: float, footage: bool
+    width: int,
+    height: int,
+    fps: int,
+    *,
+    frame_s: list[float],
+    footage: bool,
+    caption_windows: list[tuple[float, float]] | None = None,
 ) -> str:
-    """Cross-faded overlays: frame ``i`` of the build-up fades in over its slice of the
-    narration and fades out again as frame ``i+1`` fades in. Input 0 is the background
-    (looping clip, or black under opaque frames); inputs 1..steps are the PNGs.
+    """Cross-faded overlays: frame ``i`` holds for ``frame_s[i]`` and fades out as frame
+    ``i+1`` fades in. Input 0 is the background (looping clip, or black under opaque
+    frames); inputs 1..n are the build-up PNGs, and n+1.. are the subtitle plates.
 
     The captured frames are CUMULATIVE states of the build-up, so fading state ``i``
     out under state ``i+1`` fading in is exactly a cross-fade between two stills that
@@ -95,6 +124,11 @@ def _reveal_filter(
     them instead (leaving each one on and adding the next over it) would work for the
     opaque frames but compound the translucent scrim of the over-footage ones, so the
     frame darkens a step per reveal.
+
+    Subtitles go on last and are gated with ``enable`` rather than faded, so each one
+    CUTS. Cross-fading them put the outgoing and incoming line on screen together,
+    both legible, and dimmed everything under them for the length of the dissolve —
+    which is why the two layers are captured and composited separately at all.
     """
     if footage:
         bg = (
@@ -104,29 +138,55 @@ def _reveal_filter(
     else:
         bg = f"[0:v]fps={fps},setsar=1[bg];"
 
-    slice_s = dur_s / steps
-    # Half a slice at most, so a step's fade-in has always finished before its
-    # fade-out begins — two `fade` filters on one stream must not overlap.
-    fade_s = min(STEP_FADE_S, slice_s / 2)
+    steps = len(frame_s)
+    starts = [0.0]
+    for span in frame_s[:-1]:
+        starts.append(starts[-1] + span)
+
+    def transition_at(index: int) -> float:
+        """The cross-fade shared by frame ``index-1`` going out and ``index`` coming in.
+
+        Half of the SHORTER neighbour, so it can never outlast either: two `fade`
+        filters on one stream must not overlap, and a short cue between two long ones
+        would otherwise be fading for its entire life.
+        """
+        return min(STEP_FADE_S, frame_s[index - 1] / 2, frame_s[index] / 2)
 
     chain = bg
     for i in range(steps):
-        start = slice_s * i
         # yuva420p first so both fades act on ALPHA rather than towards black: the
         # frames are composited over the background, not shown on their own.
         stage = f"[{i + 1}:v]fps={fps},format=yuva420p"
         if i > 0:
-            stage += f",fade=t=in:st={start:.3f}:d={fade_s:.3f}:alpha=1"
+            stage += f",fade=t=in:st={starts[i]:.3f}:d={transition_at(i):.3f}:alpha=1"
         if i < steps - 1:
-            stage += f",fade=t=out:st={start + slice_s:.3f}:d={fade_s:.3f}:alpha=1"
+            stage += f",fade=t=out:st={starts[i + 1]:.3f}:d={transition_at(i + 1):.3f}:alpha=1"
         chain += f"{stage}[p{i}];"
+
+    windows = caption_windows or []
 
     # `fade` holds its end state outside its window — transparent before a fade-in and
     # after a fade-out — so no `enable` expression is needed to keep a step off screen.
     prev = "bg"
     for i in range(steps):
-        label = "v" if i == steps - 1 else f"o{i}"
+        last_content = i == steps - 1
+        label = ("v" if not windows else "vc") if last_content else f"o{i}"
         chain += f"[{prev}][p{i}]overlay[{label}];"
+        prev = label
+
+    # The plates are mutually exclusive by construction — cues are gapless and
+    # non-overlapping — so stacking them cannot compound their alpha.
+    # Commas inside `between()` are escaped, not quoted: this string is one
+    # filter_complex argument passed without a shell, so ffmpeg's own parser would
+    # otherwise read them as argument separators.
+    for position, (start, end) in enumerate(windows):
+        source_index = steps + 1 + position
+        chain += f"[{source_index}:v]fps={fps},format=yuva420p[cp{position}];"
+        label = "v" if position == len(windows) - 1 else f"co{position}"
+        chain += (
+            f"[{prev}][cp{position}]"
+            f"overlay=enable='between(t\\,{start:.3f}\\,{end:.3f})'[{label}];"
+        )
         prev = label
     return chain.rstrip(";")
 
@@ -182,6 +242,7 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
     last = len(segments) - 1
     seg_names: list[str] = []
     durations: list[float] = []
+    commands: list[list[str]] = []
 
     for index, segment in enumerate(segments):
         dur_s = max(0.8, segment.duration_ms / 1000)
@@ -191,7 +252,16 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
         seg_len = dur_s + (SCENE_XFADE_S if index < last else 0.0)
         seg_name = f"seg{index}.mp4"
         steps = len(segment.pngs)
-        if segment.clip is None and steps == 1:
+        captions = segment.captions or []
+        # Cue times are measured against the wav; the segment is encoded at `dur_s`,
+        # which the schema floor can raise. Scale so the last subtitle still lands on
+        # the last word instead of drifting a little further out every scene.
+        scale = dur_s / (segment.duration_ms / 1000) if segment.duration_ms > 0 else 1.0
+        caption_windows = [
+            (start_ms / 1000 * scale, end_ms / 1000 * scale)
+            for _, start_ms, end_ms in captions
+        ]
+        if segment.clip is None and steps == 1 and not captions:
             inputs = [
                 "-loop", "1", "-framerate", str(fps), "-i", segment.pngs[0].name,
                 "-filter_complex", _still_filter(width, height, fps),
@@ -203,6 +273,9 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
                 background = ["-stream_loop", "-1", "-i", str(segment.clip.resolve())]
             else:
                 background = ["-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:r={fps}"]
+            # The build-up is evenly spaced across the scene; only the subtitles are
+            # timed to the voice, and they are a separate layer now.
+            frame_s = [dur_s / steps] * steps
             inputs = [
                 *background,
                 *(
@@ -210,13 +283,19 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
                     for png in segment.pngs
                     for part in ("-loop", "1", "-framerate", str(fps), "-i", png.name)
                 ),
+                *(
+                    part
+                    for png, _, _ in captions
+                    for part in ("-loop", "1", "-framerate", str(fps), "-i", png.name)
+                ),
                 "-filter_complex",
                 _reveal_filter(
-                    width, height, fps, steps=steps, dur_s=dur_s,
+                    width, height, fps, frame_s=frame_s,
                     footage=segment.clip is not None,
+                    caption_windows=caption_windows,
                 ),
             ]
-        _run(
+        commands.append(
             [
                 "ffmpeg", "-y",
                 *inputs,
@@ -225,10 +304,24 @@ def compose(segments: list[Segment], out_mp4: Path, *, fps: int, width: int, hei
                 "-r", str(fps),
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
                 seg_name,
-            ],
-            cwd=work,
+            ]
         )
         seg_names.append(seg_name)
+
+    # Segments share nothing: each reads its own stills and writes its own file, so
+    # they encode concurrently. Capped rather than unbounded because ffmpeg is already
+    # threaded internally — past a few, the encodes only contend for the same cores,
+    # and a long storyboard would otherwise launch a dozen at once.
+    workers = max(1, min(4, (os.cpu_count() or 2) - 1, len(commands)))
+    if workers == 1 or len(commands) == 1:
+        for cmd in commands:
+            _run(cmd, cwd=work)
+    else:
+        with futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            # list() re-raises the first failure, and the context manager waits for
+            # the rest, so a broken scene cannot leave the join pass reading a
+            # half-written segment.
+            list(pool.map(lambda cmd: _run(cmd, cwd=work), commands))
 
     _run(
         [

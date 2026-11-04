@@ -8,12 +8,32 @@ we screenshot the exact viewport (no full-page scroll).
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .errors import RenderUnavailable
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SceneFrames:
+    """One scene, captured as two independent layers.
+
+    They are separate because they need different treatment in the encode: the build-up
+    should cross-fade (a bullet arriving, not popping) while the subtitle must CUT (a
+    dissolve between two different texts shows both at once). One PNG carrying both
+    cannot have it each way.
+    """
+
+    #: Cumulative build-up states, one per reveal step. Cross-faded, evenly spaced.
+    content: list[Path]
+    #: ``(png, start_ms, end_ms)`` per subtitle cue, on a transparent plate. Hard cut.
+    captions: list[tuple[Path, int, int]]
 
 
 def capture_scenes(
@@ -24,11 +44,12 @@ def capture_scenes(
     height: int,
     timeout_ms: int = 20_000,
     keep_alpha: list[bool] | None = None,
-) -> list[list[Path]]:
-    """Screenshot each scene's build-up to ``scene<i>_s<step>.png``.
+    cues: Sequence[Sequence[Any]] | None = None,
+) -> list[SceneFrames]:
+    """Screenshot each scene as a content build-up plus a subtitle plate per cue.
 
-    Returns one list of paths per scene, in reveal order: bullets and diagram scenes
-    yield a frame per step (the page's ``__reveal``), everything else a single frame.
+    ``cues[i]`` are scene ``i``'s speech-synced subtitle lines; without them the scene
+    keeps whatever caption its HTML already carries, burned into the content frames.
     ``keep_alpha[i]`` omits Chromium's white page background for scene ``i`` so a
     translucent scrim survives into the PNG for compositing over footage.
 
@@ -40,7 +61,7 @@ def capture_scenes(
         raise RenderUnavailable(f"Playwright not installed: {exc}") from exc
 
     work_dir.mkdir(parents=True, exist_ok=True)
-    out: list[list[Path]] = []
+    out: list[SceneFrames] = []
 
     try:
         with sync_playwright() as pw:
@@ -66,14 +87,34 @@ def capture_scenes(
                 # ponytail: steps capped at 8; a denser diagram than that is already
                 # rejected by the storyboard's node limit.
                 steps = min(8, int(page.evaluate("window.__stepCount || 1")))
-                frames: list[Path] = []
+                scene_cues = list(cues[index]) if cues and index < len(cues) else []
+
+                # Content first: the caption pass drops the page background to get
+                # alpha, and there is no putting it back.
+                if scene_cues:
+                    page.evaluate("window.__layer('content')")
+                content: list[Path] = []
                 for step in range(1, steps + 1):
                     if steps > 1:
                         page.evaluate(f"window.__reveal({step})")
                     png = work_dir / f"scene{index}_s{step}.png"
                     page.screenshot(path=str(png), omit_background=alpha)
-                    frames.append(png)
-                out.append(frames)
+                    content.append(png)
+
+                captions: list[tuple[Path, int, int]] = []
+                if scene_cues:
+                    page.evaluate("window.__layer('caption')")
+                    for position, cue in enumerate(scene_cues, start=1):
+                        # json.dumps, not an f-string: a narration containing a quote
+                        # or a backslash would otherwise be a syntax error in the
+                        # evaluated JS, and the scene would lose its subtitles.
+                        page.evaluate(f"window.__setCaption({json.dumps(cue.text)})")
+                        png = work_dir / f"scene{index}_c{position}.png"
+                        # Always alpha: this plate is composited over the content.
+                        page.screenshot(path=str(png), omit_background=True)
+                        captions.append((png, cue.start_ms, cue.end_ms))
+
+                out.append(SceneFrames(content=content, captions=captions))
             browser.close()
     except RenderUnavailable:
         raise

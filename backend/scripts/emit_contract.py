@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.storyboard import (  # noqa: E402
     BrollMood,
+    Theme,
     MAX_MERMAID_NODES,
     MAX_SPOKEN_SECONDS,
     json_schema,
@@ -51,6 +52,9 @@ def ts_types() -> str:
     return f"""{BANNER}
 export const BROLL_MOODS = [{", ".join(f"'{m.value}'" for m in BrollMood)}] as const;
 export type BrollMood = {moods};
+
+/** Look, motion and story shape, picked by the model from the source's tone. */
+export type Theme = {" | ".join(f"'{t.value}'" for t in Theme)};
 
 export const MAX_MERMAID_NODES = {MAX_MERMAID_NODES};
 export const MAX_SPOKEN_SECONDS = {MAX_SPOKEN_SECONDS};
@@ -99,7 +103,7 @@ export type Scene =
 export type SceneType = Scene['type'];
 
 export type Storyboard = {{
-  meta: {{ title: string; tags: string[] }};
+  meta: {{ title: string; tags: string[]; theme?: Theme }};
   source: {{ kind: 'aidoc' | 'topic'; docId?: string; url?: string; title?: string }};
   scenes: Scene[];
 }};

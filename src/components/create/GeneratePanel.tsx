@@ -25,8 +25,8 @@ import { parseSlackChannel } from './slack-ref';
 /** The backend's floor for a TOPIC. The aidoc path needs no text at all — it fetches. */
 const MIN_INPUT = 10;
 
-/** Where a Slack-sourced explainer lands by default. Matches `ANNOUNCEMENTS_SLUG` in
- *  `backend/scripts/seed.py`, which is where the channel itself comes from. */
+/** Where a Slack-sourced explainer always lands. Matches `ANNOUNCEMENTS_SLUG` in
+ *  `backend/app/main.py`, which is what actually enforces it. */
 const ANNOUNCEMENTS_SLUG = 'announcements';
 
 /** aidocs ids are `doc_` + alphanumerics, e.g. `doc_r523noskel555f7f`. Stopping at the
@@ -426,7 +426,13 @@ export function GeneratePanel({ onPublished }: { onPublished: (postId: string) =
         value={channelId}
         onChange={setChannelId}
         disabled={submitting}
-        {...(kind === 'slack' ? { defaultSlug: ANNOUNCEMENTS_SLUG } : {})}
+        {...(kind === 'slack'
+          ? {
+              lockedSlug: ANNOUNCEMENTS_SLUG,
+              lockedReason:
+                'A Slack thread is an announcement, so its explainer always posts to Announcements. The server pins this, so the choice is not offered.',
+            }
+          : {})}
       />
 
       {error ? (

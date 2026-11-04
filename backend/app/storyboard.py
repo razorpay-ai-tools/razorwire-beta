@@ -91,6 +91,20 @@ class BrollMood(str, Enum):
     CITY = "city"           # scale and reach shots
 
 
+class Theme(str, Enum):
+    """How a reel looks, moves and is told, picked by the model from the source's tone.
+
+    One visual system for every document made every reel read as the same video with
+    different words. The theme is the one knob that changes all three at once: the
+    palette and type, the motion, and the story shape the script follows.
+    """
+
+    EXPLAINER = "explainer"   # calm walkthrough of how something works
+    LAUNCH = "launch"         # brag reel: something shipped, a win, a number moved
+    INCIDENT = "incident"     # RCA / postmortem: sober, timeline, root cause, guardrail
+    BLUEPRINT = "blueprint"   # deep technical design: architecture, trade-offs, internals
+
+
 class _Model(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
@@ -205,6 +219,10 @@ Scene = Annotated[
 class StoryboardMeta(_Model):
     title: str = Field(min_length=4, max_length=70, description="Feed title. Punchy, not the document title verbatim.")
     tags: list[Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]] = Field(min_length=1, max_length=4)
+    theme: Theme = Field(
+        default=Theme.EXPLAINER,
+        description="Look, motion and story shape. Pick from the source's tone, not a default.",
+    )
 
 
 class StoryboardSource(_Model):

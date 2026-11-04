@@ -59,7 +59,12 @@ export interface Reel {
  *   narration voice. The timer stands down entirely rather than racing it, and the
  *   caller drives `advance`.
  */
-export function useReel(scenes: Scene[], active: boolean, pacedExternally = false): Reel {
+export function useReel(
+  scenes: Scene[],
+  active: boolean,
+  pacedExternally = false,
+  rate = 1,
+): Reel {
   const count = scenes.length;
   const [index, setIndex] = useState(0);
   const [line, setLine] = useState(0);
@@ -116,10 +121,13 @@ export function useReel(scenes: Scene[], active: boolean, pacedExternally = fals
         ? sceneDurationMs(scene) * ((weights[line] ?? total) / total)
         : sceneDurationMs(scene);
 
-    const timer = window.setTimeout(advance, Math.max(MIN_CAPTION_MS, hold));
+    // The floor is divided too. Clamping the scaled hold to a fixed 700ms would make
+    // every short caption hold the same length at 2x as at 1x, so the reel would stop
+    // getting faster exactly where there are the most captions.
+    const timer = window.setTimeout(advance, Math.max(MIN_CAPTION_MS, hold) / rate);
 
     return () => window.clearTimeout(timer);
-  }, [active, playing, scene, captions, line, advance, pacedExternally]);
+  }, [active, playing, scene, captions, line, advance, pacedExternally, rate]);
 
   return {
     index,

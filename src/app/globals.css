@@ -328,6 +328,33 @@ body {
 }
 
 /*
+ * The idle state of the feed's top control strip (see feed/chrome.tsx `ControlBar`).
+ *
+ * Opacity alone is not enough: the strip's children each carry `pointer-events-auto`,
+ * and `pointer-events: none` on a PARENT is explicitly re-enabled by a child setting
+ * `auto` — so an invisible Download link keeps swallowing the tap meant for
+ * play/pause. The children therefore have to be switched off individually.
+ *
+ * A real rule rather than Tailwind's `[&>*]:pointer-events-none`: that compiles to
+ * `.x > *`, whose specificity ties with the child's own `.pointer-events-auto`, so
+ * which one wins comes down to emitted source order. `!important` here settles it
+ * rather than leaving a tap target depending on utility ordering.
+ *
+ * Opacity, deliberately not `visibility` or `display`: both drop the buttons out of
+ * the tab order, and a control a keyboard user can no longer reach is not hidden, it
+ * is gone. Focus is still allowed through, and `focusin` un-hides the strip.
+ */
+/*
+ * Descendant, not child: the action rail nests its buttons two levels down inside a
+ * `pointer-events-auto` column, so a `> *` rule would leave every Like and Bookmark
+ * target live under an invisible overlay.
+ */
+.controls-idle,
+.controls-idle * {
+  pointer-events: none !important;
+}
+
+/*
  * 9:16 safe areas, sized to the chrome that actually exists rather than to a
  * percentage.
  *

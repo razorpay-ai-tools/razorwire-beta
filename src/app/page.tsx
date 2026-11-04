@@ -21,6 +21,7 @@ import { FeedScreen } from '@/components/feed/FeedScreen';
 import { ProfilePanel } from '@/components/profile/ProfilePanel';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Icon } from '@/components/ui';
+import { AutoHide, ChromeIdleProvider } from '@/components/feed/chrome';
 import { api, type ApiUser, type FeedFilter } from '@/lib/api';
 
 type Sheet = 'none' | 'generate' | 'upload' | 'channels' | 'profile';
@@ -95,6 +96,10 @@ export default function Home() {
   const scoped = view.kind === 'channel' || view.kind === 'author';
 
   return (
+    // The idle clock lives here rather than in FeedScreen because the nav pill below
+    // is a sibling of the feed and has to fade on the same schedule as the post's own
+    // chrome — two clocks over one frame reads as a glitch, not as getting out of the way.
+    <ChromeIdleProvider>
     <main className="relative h-dvh w-full overflow-hidden bg-surface-0">
       <FeedScreen key={feedKey} filter={filterFor(view)} emptyNote={emptyNoteFor(view)} />
 
@@ -125,7 +130,7 @@ export default function Home() {
        * create bar was drawn straight over them. The active-filter pill goes here for
        * the same reason.
        */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 px-4 pb-4">
+      <AutoHide className="pointer-events-none absolute inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 px-4 pb-4">
         {scoped ? (
           <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-white/10 bg-[#131415]/80 py-1.5 pl-3 pr-1.5 backdrop-blur-md">
             <Icon
@@ -194,7 +199,7 @@ export default function Home() {
           <span aria-hidden className="mx-0.5 h-5 w-px bg-white/10" />
           <ThemeToggle />
         </div>
-      </div>
+      </AutoHide>
 
       {sheet !== 'none' ? (
         <CreateSheet title={SHEET_TITLE[sheet]} onClose={() => setSheet('none')}>
@@ -212,6 +217,7 @@ export default function Home() {
         </CreateSheet>
       ) : null}
     </main>
+    </ChromeIdleProvider>
   );
 }
 

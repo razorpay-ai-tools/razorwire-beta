@@ -617,7 +617,7 @@ def test_text_only_reply_still_produces_a_storyboard(monkeypatch):
 
 # ------------------------------------------------------- the plan stage (multi-video)
 
-from app.pipeline import run_plan_stage, validate_parts  # noqa: E402
+from app.pipeline import _MIN_CHARS_TO_SPLIT, run_plan_stage, validate_parts  # noqa: E402
 
 
 def _fake_llm(monkeypatch, response):
@@ -659,10 +659,16 @@ def test_plan_validation_rejects_every_unusable_shape():
         assert validate_parts(bad) is None, bad
 
 
+#: Long enough that `run_plan_stage` actually asks the model. Below
+#: `_MIN_CHARS_TO_SPLIT` it answers "one part" without a round-trip, so a short
+#: string here would pass these tests without exercising the code they name.
+_SPLITTABLE = "word " * (_MIN_CHARS_TO_SPLIT // 4)
+
+
 def test_plan_stage_falls_back_to_a_single_part_on_garbage(monkeypatch):
     """Planning misbehaving must never fail the job — it collapses to one part."""
     _fake_llm(monkeypatch, _text_reply("I would rather chat than call tools."))
-    assert run_plan_stage(kind="aidoc", text="anything", doc_title="OTM Rearch") == [
+    assert run_plan_stage(kind="aidoc", text=_SPLITTABLE, doc_title="OTM Rearch") == [
         {"title": "OTM Rearch", "focus": ""}
     ]
 
@@ -672,13 +678,26 @@ def test_plan_stage_falls_back_when_the_call_blows_up(monkeypatch):
         raise RuntimeError("gateway down")
 
     _fake_llm(monkeypatch, boom)
-    assert len(run_plan_stage(kind="aidoc", text="anything")) == 1
+    assert len(run_plan_stage(kind="aidoc", text=_SPLITTABLE)) == 1
 
 
 def test_plan_stage_reads_a_tool_call(monkeypatch):
     plan = {"parts": [{"title": "A", "focus": "f"}, {"title": "B", "focus": "g"}]}
     _fake_llm(monkeypatch, SimpleNamespace(content=[SimpleNamespace(type="tool_use", input=plan, id="tu_1")]))
-    assert [p["title"] for p in run_plan_stage(kind="aidoc", text="anything")] == ["A", "B"]
+    assert [p["title"] for p in run_plan_stage(kind="aidoc", text=_SPLITTABLE)] == ["A", "B"]
+
+
+def test_a_short_source_is_one_part_without_asking_the_model(monkeypatch):
+    """The plan call is skipped entirely below the threshold — it cannot be answered
+    two ways, and it was a paid round-trip on the common case."""
+
+    def fail_if_called():
+        raise AssertionError("run_plan_stage must not call the model for a short source")
+
+    _fake_llm(monkeypatch, fail_if_called)
+    assert run_plan_stage(kind="aidoc", text="too short to split", doc_title="T") == [
+        {"title": "T", "focus": ""}
+    ]
 
 
 def test_single_part_leaves_the_title_unsuffixed(monkeypatch):
@@ -870,3 +889,50 @@ def test_failed_second_part_keeps_part_one_and_names_the_failure(client, monkeyp
         assert "part 2/2" in job.error and "The fix" in job.error
         assert job.post_id, "part 1's published post survives part 2's failure"
         assert client.get(f"/posts/{job.post_id}").status_code == 200
+
+
+def test_a_transient_model_failure_is_retried_not_fatal(monkeypatch):
+    """glm-5p2 on Fireworks returns a 400 'Floating point NaN in generation' — an
+    overflow in the weights, nothing to do with our request. The SDK will not retry a
+    400 and max_retries is 0, so one flake used to kill the whole job."""
+    calls = {"n": 0}
+    good = SimpleNamespace(
+        content=[SimpleNamespace(type="tool_use", input=load(), id="tu_1")]
+    )
+
+    def flake_then_succeed():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("Floating point NaN (not-a-number) is detected in generation")
+        return good
+
+    _fake_llm(monkeypatch, flake_then_succeed)
+    sb = run_script_stage(kind="topic", text="anything at all")
+    assert calls["n"] == 2, "the second attempt should have run"
+    assert sb.meta.title
+
+
+def test_a_posters_url_is_absolute_like_the_video_it_belongs_to(client):
+    """`thumbnail_url` is stored relative and must be qualified on the way out.
+
+    It was always None until `render/poster.py` began writing a poster, so the
+    serialiser had no reason to cover it. Left relative, "/media/x.jpg" resolves
+    against the web app's origin rather than this service's, 404s, and the <video>
+    quietly falls back to its own first frame — which is the black frame the poster
+    exists to replace, so the bug looks like the feature never shipped.
+    """
+    created = client.post(
+        "/posts",
+        json={
+            "title": "Poster URL Test",
+            "kind": "clip",
+            "mediaUrl": "/media/poster-test.mp4",
+            "thumbnailUrl": "/media/poster-test.jpg",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    body = client.get(f"/posts/{created.json()['id']}").json()
+    assert body["mediaUrl"].startswith("http"), body["mediaUrl"]
+    assert body["thumbnailUrl"].startswith("http"), body["thumbnailUrl"]
+    assert body["thumbnailUrl"].endswith("/media/poster-test.jpg")

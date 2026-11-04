@@ -93,6 +93,8 @@ class Post(SQLModel, table=True):
     media_url: str | None = None
     storage_key: str | None = None
     thumbnail_url: str | None = None
+    #: the HyperFrames composition, playable and scrubbable in the feed's player
+    interactive_url: str | None = None
     duration_ms: int | None = None
 
     #: full storyboard for kind="generated"; the web app renders scenes from this
@@ -196,6 +198,7 @@ _engine = create_engine(_database_url_value, echo=False, **_engine_kwargs(_datab
 _ADDED_COLUMNS: tuple[tuple[str, str, str, str | None], ...] = (
     ("posts", "storage_key", "varchar", None),
     ("posts", "thumbnail_url", "varchar", None),
+    ("posts", "interactive_url", "varchar", None),
     # Jobs that predate the column were all browser reels, which is also the request
     # default, so "reel" is the honest backfill rather than a placeholder.
     ("jobs", "format", "varchar", "reel"),

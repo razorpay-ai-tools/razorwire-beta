@@ -572,6 +572,11 @@
           "minItems": 1,
           "title": "Tags",
           "type": "array"
+        },
+        "theme": {
+          "$ref": "#/$defs/Theme",
+          "default": "explainer",
+          "description": "Look, motion and story shape. Pick from the source's tone, not a default."
         }
       },
       "required": [
@@ -637,6 +642,17 @@
       ],
       "title": "StoryboardSource",
       "type": "object"
+    },
+    "Theme": {
+      "description": "How a reel looks, moves and is told, picked by the model from the source's tone.\n\nOne visual system for every document made every reel read as the same video with\ndifferent words. The theme is the one knob that changes all three at once: the\npalette and type, the motion, and the story shape the script follows.",
+      "enum": [
+        "explainer",
+        "launch",
+        "incident",
+        "blueprint"
+      ],
+      "title": "Theme",
+      "type": "string"
     },
     "TitleScene": {
       "additionalProperties": false,

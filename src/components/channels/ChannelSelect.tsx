@@ -11,7 +11,7 @@
  * only the following feed and the channel views filter on it.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type Channel } from '@/lib/api';
 
 export function ChannelSelect({
@@ -19,17 +19,25 @@ export function ChannelSelect({
   onChange,
   disabled = false,
   id = 'channel',
-  defaultSlug,
+  lockedSlug,
+  lockedReason,
 }: {
   value: string;
   onChange: (channelId: string) => void;
   disabled?: boolean;
   id?: string;
   /**
-   * Preselect this channel once the list arrives, if nothing is chosen yet. A slug
-   * rather than an id, because the caller cannot know an id the server generated.
+   * Pin the picker to this channel and stop it being changed. A slug rather than an id,
+   * because the caller cannot know an id the server generated.
+   *
+   * A LOCK, not a default, because the server enforces the same rule and overwrites
+   * whatever it is sent (`create_post` and `_run_job` in main.py). Offering a free choice
+   * the backend silently discards is worse than offering none: the post appears somewhere
+   * the picker said it would not.
    */
-  defaultSlug?: string;
+  lockedSlug?: string;
+  /** Why it is locked. Shown in place of the usual hint. */
+  lockedReason?: string;
 }) {
   const [channels, setChannels] = useState<Channel[]>([]);
 
@@ -48,27 +56,19 @@ export function ChannelSelect({
     };
   }, []);
 
-  /*
-   * Apply `defaultSlug`. Separate from the fetch because it also has to fire when the
-   * caller CHANGES the default — switching the generate form to a Slack source asks for
-   * Announcements after the list has already loaded.
-   *
-   * Guarded by a ref, not by `value` alone. "No channel" is a real choice and it is also
-   * the empty string, so a `!value` test cannot tell "not chosen yet" from "deliberately
-   * chose none" — and would silently put the default back every time someone cleared it.
-   * Recording the slug we applied means each default lands at most once and the reader's
-   * choice is final. Fires from an effect rather than during render because it lifts
-   * state to the parent.
-   */
-  const applied = useRef<string | null>(null);
+  const locked = lockedSlug ? channels.find((channel) => channel.slug === lockedSlug) : undefined;
 
+  /*
+   * Report the locked channel upward so the request carries it too. Belt and braces: the
+   * server pins it regardless, but sending the right value keeps the payload honest and
+   * means a reader watching the network tab sees what actually happened.
+   *
+   * Safe to run on every change because it only ever fires when the resolved lock and the
+   * current value disagree, so it settles in one pass rather than looping.
+   */
   useEffect(() => {
-    if (!defaultSlug || value || applied.current === defaultSlug) return;
-    const match = channels.find((channel) => channel.slug === defaultSlug);
-    if (!match) return;
-    applied.current = defaultSlug;
-    onChange(match.id);
-  }, [defaultSlug, channels, value, onChange]);
+    if (locked && value !== locked.id) onChange(locked.id);
+  }, [locked, value, onChange]);
 
   return (
     <div>
@@ -78,21 +78,30 @@ export function ChannelSelect({
       <select
         id={id}
         name={id}
-        className="input mt-1.5"
-        value={value}
+        className="input mt-1.5 disabled:cursor-not-allowed disabled:opacity-70"
+        value={locked ? locked.id : value}
         onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
+        disabled={disabled || Boolean(lockedSlug)}
         aria-describedby={`${id}-hint`}
       >
-        <option value="">No channel</option>
+        {/* While a lock is pending — the list has not arrived, or the channel does not
+            exist yet — show the name rather than "No channel", which would be a lie. The
+            server creates the channel on publish either way. */}
+        {lockedSlug && !locked ? (
+          <option value="">{lockedReason ? 'Announcements' : lockedSlug}</option>
+        ) : (
+          <option value="">No channel</option>
+        )}
         {channels.map((channel) => (
           <option key={channel.id} value={channel.id}>
             {channel.name}
           </option>
         ))}
       </select>
-      <p id={`${id}-hint`} className="mt-1.5 text-[11px] text-neutral-500">
-        Followers of the channel see this in their Following feed.
+      <p id={`${id}-hint`} className="mt-1.5 text-[11px] leading-relaxed text-neutral-500">
+        {lockedSlug && lockedReason
+          ? lockedReason
+          : 'Followers of the channel see this in their Following feed.'}
       </p>
     </div>
   );

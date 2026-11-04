@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Icon } from '@/components/ui';
 import { api, type FeedFilter, type FeedPage, type Post } from '@/lib/api';
 import { FeedPost } from './FeedPost';
-import { MuteProvider } from './chrome';
+import { MuteProvider, SpeedProvider } from './chrome';
 
 /** Fetch the next page while the reader still has this much feed left below them. */
 const PREFETCH_MARGIN = '900px';
@@ -355,6 +355,7 @@ export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
 
   return (
     <MuteProvider>
+      <SpeedProvider>
       {/* lg:px-0 — from lg the post is a self-bounding card that centres its own player
           against the viewport, so outer padding here would shift it off the centre line. */}
       <div className="flex h-dvh w-full justify-center bg-surface-0 md:gap-6 md:px-6 lg:px-0">
@@ -411,6 +412,7 @@ export function FeedScreen({ aside, filter, emptyNote }: FeedScreenProps) {
           </div>
         ) : null}
       </div>
+      </SpeedProvider>
     </MuteProvider>
   );
 }

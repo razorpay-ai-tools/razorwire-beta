@@ -14,7 +14,17 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@/components/ui';
 import type { Post } from '@/lib/api';
 import { ActionRail } from './ActionRail';
-import { MuteButton, PostMeta, accentBackdrop, useMute } from './chrome';
+import {
+  AutoHide,
+  ControlBar,
+  DownloadButton,
+  MuteButton,
+  PostMeta,
+  SpeedButton,
+  accentBackdrop,
+  useMute,
+  usePlaybackRate,
+} from './chrome';
 
 function clock(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -31,6 +41,8 @@ export function ClipPost({ post, active }: { post: Post; active: boolean }) {
   const [broken, setBroken] = useState(false);
   const src = post.mediaUrl;
   const usable = Boolean(src) && !broken;
+
+  usePlaybackRate(ref, src);
 
   useEffect(() => {
     const video = ref.current;
@@ -124,7 +136,7 @@ export function ClipPost({ post, active }: { post: Post; active: boolean }) {
         </button>
       ) : null}
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-2 px-4 pt-4">
+      <ControlBar active={active}>
         <span className="panel flex items-center gap-1.5 px-2.5 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-300">
           <Icon name="play" label={null} filled className="size-3 shrink-0 text-neutral-400" />
           Clip
@@ -133,10 +145,12 @@ export function ClipPost({ post, active }: { post: Post; active: boolean }) {
           </span>
           <span className="tabular-nums">{clock(duration)}</span>
         </span>
-        <MuteButton className="ml-auto" />
-      </div>
+        <SpeedButton className="ml-auto" />
+        <MuteButton />
+        <DownloadButton mediaUrl={post.mediaUrl} />
+      </ControlBar>
 
-      <div className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">
+      <AutoHide className="absolute inset-x-0 bottom-0 z-30 flex flex-col gap-3 pb-16">
         <div className="pl-4 pr-20">
           <PostMeta post={post} />
           {post.description ? (
@@ -174,7 +188,7 @@ export function ClipPost({ post, active }: { post: Post; active: boolean }) {
             {clock(duration)}
           </span>
         </div>
-      </div>
+      </AutoHide>
 
       {/* No Spec action: a clip has no source document. */}
       <ActionRail post={post} anchorClassName="bottom-56 right-3" />

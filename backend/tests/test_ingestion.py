@@ -16,7 +16,10 @@ import pytest
 os.environ.setdefault("DEV_AUTH_EMAIL", "tester@razorpay.com")
 os.environ["DATABASE_URL"] = "sqlite://"
 
+from pathlib import Path  # noqa: E402
+
 from app import slack  # noqa: E402
+from app.main import ANNOUNCEMENTS_SLUG, _is_slack_sourced  # noqa: E402
 from app.scrub import scrub  # noqa: E402
 from app.storyboard import (  # noqa: E402
     GROUNDED_SOURCE_KINDS,
@@ -248,6 +251,30 @@ def test_a_thin_thread_is_not_structured(messages: list[dict], why: str) -> None
     ref = slack.parse_permalink(PERMALINK)
     content = slack.parse_thread(ref, "some-channel", messages, NAMES)
     assert not content.is_structured, why
+
+
+# ------------------------------------------------------- where a slack post has to land
+#
+# These replace the old SLACK_ALLOWED_CHANNELS tests. That allow-list restricted which
+# Slack channel could be READ; this restricts where the result LANDS on our side, which
+# is the rule that took its place.
+
+
+def test_a_slack_sourced_storyboard_is_recognised_from_its_own_source() -> None:
+    """The pin-to-Announcements rule keys off the storyboard, not a separate flag."""
+    assert _is_slack_sourced({"source": {"kind": "slack", "url": PERMALINK}})
+    assert not _is_slack_sourced({"source": {"kind": "aidoc", "docId": "doc_x"}})
+    # Absent, empty and malformed sources must not be mistaken for Slack.
+    assert not _is_slack_sourced(None)
+    assert not _is_slack_sourced({})
+    assert not _is_slack_sourced({"source": "slack"})
+
+
+def test_the_announcements_slug_agrees_with_the_seed_script() -> None:
+    """Two constants, one string. If they drift, posts land in a channel nobody follows."""
+    seed = (Path(__file__).resolve().parents[1] / "scripts" / "seed.py").read_text()
+    assert '("Announcements",' in seed, "seed.py no longer creates an Announcements channel"
+    assert ANNOUNCEMENTS_SLUG == "announcements"
 
 
 # ------------------------------------------------------------- the contract accepts it

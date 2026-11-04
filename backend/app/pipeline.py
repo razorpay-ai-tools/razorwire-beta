@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 from .config import settings
 from .storyboard import (
@@ -36,7 +37,23 @@ MAX_ATTEMPTS = 3
 # ponytail: cap prompt size to keep the gateway request under its timeout; add a
 # document summarisation stage only if truncating source proves insufficient.
 _MAX_SOURCE_CHARS = 32_000
-_LLM_TIMEOUT_SECONDS = 180.0
+#: Per-request ceiling. 180s cut the script stage off mid-think at exactly 181s on a
+#: long source — our own timeout, not the gateway's. A reasoning model at 16384
+#: tokens legitimately needs longer than that, so the ceiling has to clear the work
+#: it was asked to do; `_STAGE_DEADLINE_SECONDS` is what stops it stacking.
+_LLM_TIMEOUT_SECONDS = 420.0
+#: Total wall clock allowed across ALL attempts of one stage.
+#:
+#: The SDK's `timeout` is per HTTP operation — effectively an inactivity timeout —
+#: so a reasoning model that keeps streaming never trips it, and three attempts can
+#: stack. A 172k-character source spent 64 minutes here before the gateway gave up,
+#: with the job pinned at `scripting` the whole time. Checked between attempts: it
+#: cannot interrupt a call already in flight, but it stops us starting another.
+_STAGE_DEADLINE_SECONDS = 600.0
+#: Below this, `run_plan_stage` answers "one part" without a round-trip. 220 words of
+#: narration is the whole 90-second budget, and a source needs several times that
+#: before a second part has anything of its own to say.
+_MIN_CHARS_TO_SPLIT = 6_000
 
 _SYSTEM = f"""You turn internal Razorpay engineering documents into 60-second vertical explainer videos.
 
@@ -65,9 +82,9 @@ Rules that matter more than style:
    payoff, a full stop instead of a run-on. Read your narration aloud in your head — if you
    run out of air, so will the voice.
 
-3c. TONE IS LIGHT. Warm, upbeat and plainly glad to explain — a colleague sharing something
-   genuinely useful, not a system issuing a briefing. Problems are the setup for a fix, never
-   doom. Keep it professional: light means easy to listen to, not jokey.
+3c. TONE FOLLOWS THE THEME (rule 6). Always professional and easy to listen to, never
+   jokey, never doom — but a launch should sound proud, an incident calm and exact, a deep
+   dive curious. Do not write every source in the same voice.
 
 4. BUDGET. {{min_scenes}} to {{max_scenes}} scenes, and all narration together runs 60 to 90
    seconds spoken — roughly 150 to 220 words in total. Use the room to actually cover the
@@ -94,7 +111,27 @@ Rules that matter more than style:
    behind your content and carries no information. Use `abstract` behind dense scenes such as
    diagrams and code, where busy footage would fight the overlay.
 
-Shape a story, not a summary: the problem, what changes, and what the viewer must not get wrong.
+6. THEME. Read the source's tone and set `meta.theme`. The theme changes the look, the
+   motion AND the story shape, so two different documents must not come out as the same
+   video. Pick the one that fits; `explainer` only when nothing else does.
+
+   - `launch` — something shipped, a win, a metric moved. A brag reel. Open on the
+     result or the number in the first scene (a `title` whose heading IS the result).
+     Then what it unlocks for the viewer, one diagram of how it works, and close on the
+     flex. Short, punchy headings of 2 to 5 words. Proud, energetic narration.
+   - `incident` — an RCA, a postmortem, an outage, a bug hunt. Cold open on the symptom
+     as a customer saw it. Then what happened in order, the root cause as a `diagram`,
+     the fix, and the guardrail that stops it recurring. Calm, precise, no blame.
+   - `blueprint` — a design doc, an architecture or rearch proposal, internals. Open on
+     the question the design answers. Walk the architecture, show the trade-off (a
+     `compare` or two diagrams), and end on what was decided and why. Curious, exact.
+   - `explainer` — how an existing thing works, a guide, onboarding. Problem, how it
+     works, the one thing people get wrong. Warm and plainly glad to explain.
+
+   Vary the scene mix to fit the shape: not every reel is title, bullets, diagram, code,
+   outro. A launch may have no code; an incident may open with bullets as a timeline.
+
+Shape a story, not a summary.
 """
 
 _TOOL_NAME = "emit_storyboard"
@@ -131,9 +168,10 @@ start to finish. Write it as a short informative film, not as slides:
 - ONE WORKED EXAMPLE, carried through. Pick a single concrete case the document supports —
   one request, one mandate, one outage — and follow it across the scenes so the viewer
   tracks a story instead of a list of facts. Use the document's real names and numbers.
-- ARC, NOT AGENDA. Open on the stake: what breaks, what it costs, who feels it. The very
-  first sentence is a hook under twelve words. Turn on the change. Close on what is
-  different now. Never open with "this document covers".
+- ARC, NOT AGENDA. The theme's story shape (rule 6) decides where the arc starts — the
+  result for a launch, the symptom for an incident, the question for a blueprint, the
+  stake for an explainer. Whatever it is, the very first sentence is a hook under twelve
+  words. Never open with "this document covers".
 - SPOKEN, NOT WRITTEN. Contractions, short sentences, one idea per sentence. The voice is
   the whole soundtrack, so a sentence that would be skimmed on screen has to be heard. No
   lists read aloud as lists.
@@ -229,18 +267,51 @@ def run_script_stage(
     messages: list[dict] = [{"role": "user", "content": prompt}]
     last_errors: list[str] = ["model produced no tool call"]
 
+    started = time.monotonic()
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        response = client.messages.create(
-            model=settings.llm_model,
-            # glm-5p2 is a reasoning model: its thinking block alone can eat 4096 tokens
-            # (the video brief reliably did), leaving stop_reason=max_tokens and an empty
-            # reply. The budget must cover thinking AND the storyboard.
-            max_tokens=8192,
-            system=_system_prompt(),
-            tools=[tool],
-            tool_choice={"type": "tool", "name": _TOOL_NAME},
-            messages=messages,
-        )
+        elapsed = time.monotonic() - started
+        if attempt > 1 and elapsed > _STAGE_DEADLINE_SECONDS:
+            log.warning(
+                "script stage out of budget after %.0fs on attempt %d; giving up",
+                elapsed,
+                attempt,
+            )
+            break
+        try:
+            # Non-streaming on purpose: the gateway kills long-lived streams ("peer
+            # closed connection ... incomplete chunked read"), so streaming trades the
+            # 420s read timeout for a mid-generation drop. glm-5p3 (Sep 2026) cannot
+            # finish a generation-sized reply through the gateway either way — even a
+            # 6-scene probe with thinking disabled exceeds 420s — while glm-5p2 does
+            # the same probe in ~40s. Until the gateway's 5p3 deployment speeds up,
+            # run this stage on glm-5p2 (LLM_MODEL env override).
+            response = client.messages.create(
+                model=settings.llm_model,
+                # glm-5p2 is a reasoning model and the budget must cover thinking AND
+                # the storyboard. At 4096 the thinking block alone exhausted it; at
+                # 8192 the same failure came back on longer sources —
+                # stop_reason=max_tokens, an empty reply, and "no tool call and no JSON
+                # to fall back to". Lowering this to shorten a slow call trades a slow
+                # success for a certain failure. The only safe way to shorten the call
+                # is a smaller INPUT.
+                max_tokens=16384,
+                system=_system_prompt(),
+                tools=[tool],
+                tool_choice={"type": "tool", "name": _TOOL_NAME},
+                messages=messages,
+            )
+        except Exception as exc:
+            # The model itself can fail in ways a retry fixes. glm-5p2 on Fireworks
+            # returns a 400 saying "Floating point NaN is detected in generation" —
+            # an overflow in the weights, unrelated to our request, and the gateway has
+            # no fallback group configured for it. The SDK will not retry a 400 and we
+            # set max_retries=0, so one flake killed the whole job. Spend an attempt
+            # instead; a genuine 401 or bad request simply fails all three and raises.
+            last_errors = [f"model call failed: {exc}"]
+            log.warning("attempt %d/%d: %s", attempt, MAX_ATTEMPTS, exc)
+            if attempt == MAX_ATTEMPTS:
+                raise
+            continue
 
         block = next((b for b in response.content if getattr(b, "type", None) == "tool_use"), None)
 
@@ -446,6 +517,7 @@ def validate_parts(candidate) -> list[dict[str, str]] | None:
     return out
 
 
+
 def run_plan_stage(*, kind: str, text: str, doc_title: str | None = None) -> list[dict[str, str]]:
     """One LLM call deciding whether the source is one video or 2-3 logically split parts.
 
@@ -456,10 +528,25 @@ def run_plan_stage(*, kind: str, text: str, doc_title: str | None = None) -> lis
     fallback = [{"title": doc_title or "", "focus": ""}]
     if not settings.llm_api_key:
         return fallback
+    # A source this short cannot fill one 90-second video, let alone two, so the plan
+    # is knowable without asking: skip a whole paid round-trip on the common case.
+    # The threshold is deliberately conservative — roughly the length at which a
+    # document starts to carry more than one load-bearing storyline.
+    if len(text) < _MIN_CHARS_TO_SPLIT:
+        log.info("source is %d chars; one part without asking the model", len(text))
+        return fallback
     try:
         from anthropic import Anthropic
 
-        client = Anthropic(api_key=settings.llm_api_key, base_url=settings.llm_base_url or None)
+        # Bounded exactly like the script stage. Left on SDK defaults this call could
+        # run 600s and then retry twice, so a slow gateway cost half an hour before
+        # the job even started scripting.
+        client = Anthropic(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url or None,
+            timeout=_LLM_TIMEOUT_SECONDS,
+            max_retries=0,
+        )
         response = client.messages.create(
             model=settings.llm_model,
             # reasoning models think before they answer; see run_script_stage

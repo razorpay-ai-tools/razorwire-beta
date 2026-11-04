@@ -12,8 +12,24 @@
 import type { Scene, Storyboard } from './storyboard.types';
 
 const EXTERNAL_API_BASE = process.env.NEXT_PUBLIC_API_URL;
-const BASE = EXTERNAL_API_BASE ?? 'http://localhost:8000';
+/*
+ * 127.0.0.1, not `localhost`. `localhost` resolves to ::1 first in browsers and macOS,
+ * and anything holding a wildcard `*:8000` bind — a DynamoDB Local container, say —
+ * answers there instead of this backend, which binds 127.0.0.1 only. The symptom is the
+ * whole app looking wiped: every video 404s and the profile sheet comes up empty,
+ * because a foreign service is replying to /feed and /me.
+ */
+const BASE = EXTERNAL_API_BASE ?? 'http://127.0.0.1:8000';
 const BACKEND_MODE = process.env.NEXT_PUBLIC_BACKEND_MODE ?? 'api';
+/*
+ * Matches TUNNEL_SECRET on the backend. Only needed when the API is reachable over a
+ * public tunnel; unset for a laptop-only run and the backend skips the check.
+ *
+ * NEXT_PUBLIC_ means this ships in the browser bundle, which is the honest shape of
+ * it: this stops a crawler or a pasted URL from spending the LLM key, and nothing
+ * more. Who is allowed in is decided by whatever gates this frontend.
+ */
+const API_SECRET = process.env.NEXT_PUBLIC_API_SECRET;
 let flashViewerEmail: Promise<string | null> | null = null;
 
 export interface ApiUser {
@@ -61,6 +77,8 @@ export interface Post {
   mediaUrl: string | null;
   storageKey: string | null;
   thumbnailUrl: string | null;
+  /** The HyperFrames composition itself, scrubbable in the feed's player. */
+  interactiveUrl: string | null;
   durationMs: number | null;
   storyboard: Storyboard | null;
   sourceDocId: string | null;
@@ -210,6 +228,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: {
       ...(init?.body instanceof FormData ? {} : { 'content-type': 'application/json' }),
       ...(viewerEmail ? { 'x-dev-email': viewerEmail } : {}),
+      ...(API_SECRET ? { 'x-razorwire-secret': API_SECRET } : {}),
       ...init?.headers,
     },
   });
@@ -304,6 +323,8 @@ type StoredPost = CreatePostRequest & {
   author: ApiUser;
   views: number;
   createdAt: string;
+  /** Set by the backend's publish step only; never sent on create. */
+  interactiveUrl?: string;
 };
 
 type StoredChannel = {
@@ -448,6 +469,7 @@ function postOut(
     mediaUrl: post.mediaUrl ?? null,
     storageKey: post.storageKey ?? null,
     thumbnailUrl: post.thumbnailUrl ?? null,
+    interactiveUrl: post.interactiveUrl ?? null,
     durationMs: post.durationMs ?? null,
     storyboard: post.storyboard ?? null,
     sourceDocId: post.sourceDocId ?? null,
